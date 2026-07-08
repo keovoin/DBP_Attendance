@@ -1,0 +1,21 @@
+# Keep the image small and free of secrets / local artefacts.
+.git
+.gitignore
+.env
+*.db
+*.sqlite
+*.sqlite3
+data/
+exports/
+*.csv
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tests/
+README.md
+DEPLOY.md
+.env.example

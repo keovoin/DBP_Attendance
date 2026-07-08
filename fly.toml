@@ -1,0 +1,38 @@
+# Fly.io configuration for the Telegram Attendance Tracker.
+#
+# This bot uses long polling (no inbound HTTP), so there is intentionally NO
+# [http_service] block. Without HTTP services Fly keeps the machine running
+# continuously instead of auto-stopping it, which is exactly what a polling
+# bot needs.
+#
+# The app name must be globally unique. Change it, or let `fly launch` pick one.
+app = "dbp-attendance-bot"
+
+# Pick a region close to your users. Examples:
+#   sin = Singapore, hkg = Hong Kong, nrt = Tokyo, fra = Frankfurt, iad = US East
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Non-secret configuration. Secrets (BOT_TOKEN, ADMIN_TELEGRAM_IDS) are set
+# separately with `fly secrets set` so they are never committed to git.
+[env]
+  DB_PATH = "/data/attendance.db"
+  TZ_OFFSET_HOURS = "7"
+  GEOFENCE_RADIUS_METERS = "20"
+  POLL_TIMEOUT_SECONDS = "30"
+
+# Persistent volume for the SQLite database. Mounted at /data so attendance
+# history survives deploys and restarts. Create it once with:
+#   fly volumes create attendance_data --region sin --size 1
+[mounts]
+  source = "attendance_data"
+  destination = "/data"
+
+# Keep exactly one instance running (a bot must be a single poller: running
+# two copies would cause duplicate replies / getUpdates conflicts).
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpus = 1
