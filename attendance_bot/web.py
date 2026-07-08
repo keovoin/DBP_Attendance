@@ -392,6 +392,10 @@ class _PortalHandler(BaseHTTPRequestHandler):
             "/settings/geofence": self._set_geofence,
             "/settings/recalc-late": self._recalc_late,
             "/members/bulk": self._bulk_add_members,
+            "/units/add": self._add_unit,
+            "/units/delete": self._delete_unit,
+            "/coordinators/add": self._add_coordinator,
+            "/coordinators/delete": self._delete_coordinator,
         }
         action = actions.get(path)
         if action is None:
@@ -427,6 +431,14 @@ class _PortalHandler(BaseHTTPRequestHandler):
             sel = " selected" if selected_id and int(selected_id) == s.id else ""
             opts.append(f'<option value="{s.id}"{sel}>{_e(s.name)}</option>')
         return "".join(opts)
+
+    def _named_datalists(self) -> str:
+        units = "".join(f'<option value="{_attr(u.name)}">'
+                        for u in self.db.list_units())
+        coords = "".join(f'<option value="{_attr(c.name)}">'
+                         for c in self.db.list_coordinators())
+        return (f'<datalist id="unitlist">{units}</datalist>'
+                f'<datalist id="coordlist">{coords}</datalist>')
 
     def _site_name(self, site_id) -> str:
         if not site_id:
@@ -671,12 +683,12 @@ class _PortalHandler(BaseHTTPRequestHandler):
           <form class="stack" method="post" action="/members/add">
             <div><label>Telegram ID</label><input name="telegram_id" placeholder="123456789"></div>
             <div><label>Name</label><input name="name" placeholder="Full name"></div>
-            <div><label>Unit</label><input name="unit" placeholder="Department"></div>
+            <div><label>Unit</label><input name="unit" list="unitlist" placeholder="Department"></div>
             <div><label>Base site</label><select name="base_site_id">{self._site_options(None)}</select></div>
             <div><label>Role</label><select name="role">
               <option value="regular">Regular</option><option value="admin">Admin</option>
             </select></div>
-            <div><label>Coordinator</label><input name="coordinator" placeholder="Optional"></div>
+            <div><label>Coordinator</label><input name="coordinator" list="coordlist" placeholder="Optional"></div>
             <div><button type="submit">Add</button></div>
           </form>
           <p class="muted" style="margin-bottom:0">Telegram ID must be the person's
@@ -700,6 +712,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         </div>
         <table><tr><th>Name</th><th>Role</th><th>Unit</th><th>Base site</th>
         <th>Coordinator</th><th>Telegram ID</th><th></th></tr>{rows}</table>
+        {self._named_datalists()}
         """
         return layout("Members", body, active="mem")
 
@@ -721,18 +734,19 @@ class _PortalHandler(BaseHTTPRequestHandler):
           <form class="stack" method="post" action="/members/update">
             <input type="hidden" name="telegram_id" value="{m.telegram_id}">
             <div><label>Name</label><input name="name" value="{_attr(m.name)}"></div>
-            <div><label>Unit</label><input name="unit" value="{_attr(m.unit)}"></div>
+            <div><label>Unit</label><input name="unit" list="unitlist" value="{_attr(m.unit)}"></div>
             <div><label>Base site</label>
               <select name="base_site_id">{self._site_options(m.base_site_id)}</select></div>
             <div><label>Role</label><select name="role">
               <option value="regular"{role_reg}>Regular</option>
               <option value="admin"{role_admin}>Admin</option>
             </select></div>
-            <div><label>Coordinator</label><input name="coordinator" value="{_attr(m.coordinator)}"></div>
+            <div><label>Coordinator</label><input name="coordinator" list="coordlist" value="{_attr(m.coordinator)}"></div>
             <div><button type="submit">Save</button>
               <a class="btn secondary" href="/members">Cancel</a></div>
           </form>
         </div>
+        {self._named_datalists()}
         <form method="post" action="/members/delete"
               onsubmit="return confirm('Delete this member and ALL their attendance?')">
           <input type="hidden" name="telegram_id" value="{m.telegram_id}">
@@ -889,6 +903,21 @@ class _PortalHandler(BaseHTTPRequestHandler):
             )
         site_rows = site_rows or '<tr><td colspan="4" class="muted">No sites yet.</td></tr>'
 
+        def _named_rows(items, kind):
+            out = ""
+            for it in items:
+                out += (
+                    f"<tr><td>{_e(it.name)}</td><td class='actions'>"
+                    f"<form method='post' action='/{kind}/delete' style='display:inline'"
+                    f" onsubmit=\"return confirm('Delete {_attr(it.name)}?')\">"
+                    f"<input type='hidden' name='id' value='{it.id}'>"
+                    f"<button class='btn danger' type='submit'>Delete</button></form></td></tr>"
+                )
+            return out or '<tr><td colspan="2" class="muted">None yet.</td></tr>'
+
+        unit_rows = _named_rows(self.db.list_units(), "units")
+        coord_rows = _named_rows(self.db.list_coordinators(), "coordinators")
+
         sched = self.db.get_work_schedule()
         day_checks = ""
         for i, name in enumerate(timeutil.WEEKDAY_NAMES):
@@ -967,6 +996,28 @@ class _PortalHandler(BaseHTTPRequestHandler):
           {site_rows}</table>
           <p class="muted" style="margin-bottom:0">Add sites on the
           <a href="/map">Map</a> page (click the map to grab coordinates).</p>
+        </div>
+        <div class="row2">
+          <div class="panel">
+            <h2>Units / departments</h2>
+            <p class="muted">Members select from this list when registering.</p>
+            <form class="stack" method="post" action="/units/add">
+              <div><label>Unit name</label><input name="name" placeholder="e.g. Operations"></div>
+              <div><button type="submit">Add unit</button></div>
+            </form>
+            <table class="small" style="margin-top:12px"><tr><th>Name</th><th></th></tr>
+            {unit_rows}</table>
+          </div>
+          <div class="panel">
+            <h2>Coordinators</h2>
+            <p class="muted">Members select from this list when registering.</p>
+            <form class="stack" method="post" action="/coordinators/add">
+              <div><label>Coordinator name</label><input name="name" placeholder="e.g. Sophea"></div>
+              <div><button type="submit">Add coordinator</button></div>
+            </form>
+            <table class="small" style="margin-top:12px"><tr><th>Name</th><th></th></tr>
+            {coord_rows}</table>
+          </div>
         </div>
         <div class="panel">
           <h2>Recent changes (audit log)</h2>
@@ -1178,6 +1229,50 @@ class _PortalHandler(BaseHTTPRequestHandler):
         self.db.delete_site(site_id)
         self._audit("site.delete", site.name)
         self._flash_redirect("/settings", ok=f"Site '{site.name}' deleted.")
+
+    def _add_unit(self, form) -> None:
+        name = form.get("name", "").strip()
+        if not name:
+            self._flash_redirect("/settings", err="Please enter a unit name.")
+            return
+        self.db.add_unit(name)
+        self._audit("unit.add", name)
+        self._flash_redirect("/settings", ok=f"Unit '{name}' added.")
+
+    def _delete_unit(self, form) -> None:
+        try:
+            uid = int(form.get("id", "0"))
+        except ValueError:
+            uid = 0
+        item = self.db.get_unit(uid)
+        if item is None:
+            self._flash_redirect("/settings", err="Unit not found.")
+            return
+        self.db.delete_unit(uid)
+        self._audit("unit.delete", item.name)
+        self._flash_redirect("/settings", ok=f"Unit '{item.name}' deleted.")
+
+    def _add_coordinator(self, form) -> None:
+        name = form.get("name", "").strip()
+        if not name:
+            self._flash_redirect("/settings", err="Please enter a coordinator name.")
+            return
+        self.db.add_coordinator(name)
+        self._audit("coordinator.add", name)
+        self._flash_redirect("/settings", ok=f"Coordinator '{name}' added.")
+
+    def _delete_coordinator(self, form) -> None:
+        try:
+            cid = int(form.get("id", "0"))
+        except ValueError:
+            cid = 0
+        item = self.db.get_coordinator(cid)
+        if item is None:
+            self._flash_redirect("/settings", err="Coordinator not found.")
+            return
+        self.db.delete_coordinator(cid)
+        self._audit("coordinator.delete", item.name)
+        self._flash_redirect("/settings", ok=f"Coordinator '{item.name}' deleted.")
 
     def _set_location(self, form) -> None:
         try:

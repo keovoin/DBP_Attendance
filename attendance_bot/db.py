@@ -84,6 +84,13 @@ class Site:
 
 
 @dataclass
+class NamedItem:
+    """A simple id/name lookup row (used for units and coordinators)."""
+    id: int
+    name: str
+
+
+@dataclass
 class WorkSchedule:
     start: str = DEFAULT_WORK_START
     end: str = DEFAULT_WORK_END
@@ -167,6 +174,16 @@ class Database:
                 actor     TEXT NOT NULL,
                 action    TEXT NOT NULL,
                 detail    TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS units (
+                id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            );
+
+            CREATE TABLE IF NOT EXISTS coordinators (
+                id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
             );
             """
         )
@@ -572,6 +589,51 @@ class Database:
         if legacy:
             return [Site(id=0, name="Main", latitude=legacy[0], longitude=legacy[1])]
         return []
+
+    # ------------------------------------------------------------------ #
+    # Units & coordinators (admin-managed master lists)
+    # ------------------------------------------------------------------ #
+    def add_unit(self, name: str) -> None:
+        self.conn.execute("INSERT OR IGNORE INTO units (name) VALUES (?)", (name,))
+        self.conn.commit()
+
+    def list_units(self) -> list[NamedItem]:
+        rows = self.conn.execute(
+            "SELECT * FROM units ORDER BY name COLLATE NOCASE ASC"
+        ).fetchall()
+        return [NamedItem(r["id"], r["name"]) for r in rows]
+
+    def get_unit(self, unit_id: int) -> Optional[NamedItem]:
+        row = self.conn.execute(
+            "SELECT * FROM units WHERE id = ?", (unit_id,)
+        ).fetchone()
+        return NamedItem(row["id"], row["name"]) if row else None
+
+    def delete_unit(self, unit_id: int) -> None:
+        self.conn.execute("DELETE FROM units WHERE id = ?", (unit_id,))
+        self.conn.commit()
+
+    def add_coordinator(self, name: str) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO coordinators (name) VALUES (?)", (name,)
+        )
+        self.conn.commit()
+
+    def list_coordinators(self) -> list[NamedItem]:
+        rows = self.conn.execute(
+            "SELECT * FROM coordinators ORDER BY name COLLATE NOCASE ASC"
+        ).fetchall()
+        return [NamedItem(r["id"], r["name"]) for r in rows]
+
+    def get_coordinator(self, coord_id: int) -> Optional[NamedItem]:
+        row = self.conn.execute(
+            "SELECT * FROM coordinators WHERE id = ?", (coord_id,)
+        ).fetchone()
+        return NamedItem(row["id"], row["name"]) if row else None
+
+    def delete_coordinator(self, coord_id: int) -> None:
+        self.conn.execute("DELETE FROM coordinators WHERE id = ?", (coord_id,))
+        self.conn.commit()
 
     # ------------------------------------------------------------------ #
     # Audit log

@@ -16,8 +16,9 @@ Admins get an optional **web dashboard** in the browser.
 - **SQLite data store** — a single file, created automatically.
 - **Geofenced on-site clock-in** using the haversine distance formula.
 - **Role-based access control** with an easy first-admin bootstrap.
-- **Guided registration** — new members set their real name, unit/department,
-  coordinator, and base location (for teams across multiple places/departments).
+- **Guided registration** — new members set their real name, then **select**
+  their coordinator, unit/department and base location from admin-managed lists
+  (with a typed fallback), so no free-typing is needed.
 - **Auto late-detection** — clock-ins after the work start time (plus a
   configurable grace period) are flagged and the member is prompted for a reason.
 - **Daily reminders + auto clock-out** — morning "clock in" and evening "clock
@@ -123,9 +124,11 @@ log in with that password, and you get:
 - **Map** — plots configured sites and on-site clock-in points (Leaflet); click
   the map to grab coordinates and add a new site.
 - **Settings** — the default on-site location, the **geofence radius**,
-  **multiple named sites**, the **work schedule** (start/end times, working
-  days, **late grace period**, reminders on/off, **auto clock-out time**), a
-  **"recalculate late flags"** action, and an **audit log** of admin changes.
+  **multiple named sites**, master lists of **units/departments** and
+  **coordinators** (which members select during registration), the **work
+  schedule** (start/end times, working days, **late grace period**, reminders
+  on/off, **auto clock-out time**), a **"recalculate late flags"** action, and
+  an **audit log** of admin changes.
 
 The dashboard is protected by a signed `HttpOnly` session cookie, and shares the
 bot's database (SQLite in WAL mode for safe concurrent reads). All admin write

@@ -231,15 +231,29 @@ class AttendanceBot:
             self._send(chat_id, "Please send a non-empty name.")
             return
         self.db.update_name(user_id, name)
+        self._send(chat_id, f"Thanks, {name}!")
+        self._prompt_coordinator(chat_id, user_id, flow="register")
+
+    # --- coordinator (select from admin list, or type) -----------------
+    def _prompt_coordinator(self, chat_id: int, user_id: int, flow) -> None:
+        coords = self.db.list_coordinators()
         self.states[user_id] = ConversationState(
-            STATE_AWAITING_COORDINATOR, {"flow": "register"}
+            STATE_AWAITING_COORDINATOR, {"flow": flow}
         )
-        self._send(
-            chat_id,
-            f"Thanks, {name}. Who is your *coordinator* (supervisor)? "
-            "Reply with their name.",
-            parse_mode="Markdown",
-        )
+        if coords:
+            rows = [[(c.name, f"coord:{c.id}")] for c in coords]
+            self._send(
+                chat_id,
+                "Select your *coordinator* (or type a name):",
+                reply_markup=inline_keyboard(rows),
+                parse_mode="Markdown",
+            )
+        else:
+            self._send(
+                chat_id,
+                "Who is your *coordinator* (supervisor)? Reply with their name.",
+                parse_mode="Markdown",
+            )
 
     def _complete_coordinator(
         self, chat_id: int, user_id: int, text: str, state: ConversationState
@@ -248,27 +262,42 @@ class AttendanceBot:
         if not coordinator:
             self._send(chat_id, "Please send a non-empty coordinator name.")
             return
-        self.db.set_coordinator(user_id, coordinator)
+        self._apply_coordinator(chat_id, user_id, coordinator, state)
 
+    def _apply_coordinator(
+        self, chat_id: int, user_id: int, coordinator: str, state: ConversationState
+    ) -> None:
+        self.db.set_coordinator(user_id, coordinator)
         if state.data.get("after") == "clockin":
             self.states.pop(user_id, None)
             self._send(chat_id, f"Coordinator set to: {coordinator}")
             self._start_clock_in_selection(chat_id, user_id)
             return
-
         if state.data.get("flow") == "register":
-            self.states[user_id] = ConversationState(
-                STATE_AWAITING_UNIT, {"flow": "register"}
+            self._send(chat_id, f"Coordinator: {coordinator}")
+            self._prompt_unit(chat_id, user_id, flow="register")
+            return
+        self.states.pop(user_id, None)
+        self._send(chat_id, f"Coordinator set to: {coordinator}")
+
+    # --- unit (select from admin list, or type) ------------------------
+    def _prompt_unit(self, chat_id: int, user_id: int, flow) -> None:
+        units = self.db.list_units()
+        self.states[user_id] = ConversationState(STATE_AWAITING_UNIT, {"flow": flow})
+        if units:
+            rows = [[(u.name, f"unit:{u.id}")] for u in units]
+            self._send(
+                chat_id,
+                "Select your *unit / department* (or type a name):",
+                reply_markup=inline_keyboard(rows),
+                parse_mode="Markdown",
             )
+        else:
             self._send(
                 chat_id,
                 "Which *unit / department* are you from? Reply with its name.",
                 parse_mode="Markdown",
             )
-            return
-
-        self.states.pop(user_id, None)
-        self._send(chat_id, f"Coordinator set to: {coordinator}")
 
     def _complete_unit(
         self, chat_id: int, user_id: int, text: str, state: ConversationState
@@ -277,9 +306,17 @@ class AttendanceBot:
         if not unit:
             self._send(chat_id, "Please send a non-empty unit/department name.")
             return
+        self._apply_unit(chat_id, user_id, unit, state)
+
+    def _apply_unit(
+        self, chat_id: int, user_id: int, unit: str, state: ConversationState
+    ) -> None:
         self.db.set_unit(user_id, unit)
-        # Next: base location selection (if any sites are configured).
-        self._prompt_base_selection(chat_id, user_id, flow="register")
+        if state.data.get("flow") == "register":
+            self._prompt_base_selection(chat_id, user_id, flow="register")
+        else:
+            self.states.pop(user_id, None)
+            self._send(chat_id, f"Unit set to: {unit}")
 
     def _prompt_base_selection(self, chat_id: int, user_id: int, flow: str) -> None:
         sites = self.db.list_sites()
@@ -352,8 +389,7 @@ class AttendanceBot:
         if member is None:
             return
         if not arg_str:
-            self.states[user_id] = ConversationState(STATE_AWAITING_COORDINATOR)
-            self._send(chat_id, "Please reply with your coordinator's name.")
+            self._prompt_coordinator(chat_id, user_id, flow=None)
             return
         self.db.set_coordinator(user_id, arg_str)
         self._send(chat_id, f"Coordinator set to: {arg_str}")
@@ -363,8 +399,7 @@ class AttendanceBot:
         if member is None:
             return
         if not arg_str:
-            self.states[user_id] = ConversationState(STATE_AWAITING_UNIT)
-            self._send(chat_id, "Please reply with your unit/department name.")
+            self._prompt_unit(chat_id, user_id, flow=None)
             return
         self.db.set_unit(user_id, arg_str)
         self._send(chat_id, f"Unit set to: {arg_str}")
@@ -438,6 +473,36 @@ class AttendanceBot:
             self._on_clockin_choice(chat_id, user_id, data.split(":", 1)[1])
         elif data.startswith("base:"):
             self._on_base_choice(chat_id, user_id, data.split(":", 1)[1])
+        elif data.startswith("coord:"):
+            self._on_coordinator_choice(chat_id, user_id, data.split(":", 1)[1])
+        elif data.startswith("unit:"):
+            self._on_unit_choice(chat_id, user_id, data.split(":", 1)[1])
+
+    def _on_coordinator_choice(self, chat_id: int, user_id: int, raw: str) -> None:
+        if self._require_member(chat_id, user_id) is None:
+            return
+        try:
+            item = self.db.get_coordinator(int(raw))
+        except ValueError:
+            return
+        if item is None:
+            self._send(chat_id, "That coordinator is no longer available - type a name.")
+            return
+        state = self.states.get(user_id) or ConversationState(STATE_AWAITING_COORDINATOR)
+        self._apply_coordinator(chat_id, user_id, item.name, state)
+
+    def _on_unit_choice(self, chat_id: int, user_id: int, raw: str) -> None:
+        if self._require_member(chat_id, user_id) is None:
+            return
+        try:
+            item = self.db.get_unit(int(raw))
+        except ValueError:
+            return
+        if item is None:
+            self._send(chat_id, "That unit is no longer available - type a name.")
+            return
+        state = self.states.get(user_id) or ConversationState(STATE_AWAITING_UNIT)
+        self._apply_unit(chat_id, user_id, item.name, state)
 
     def _on_clockin_choice(self, chat_id: int, user_id: int, choice: str) -> None:
         member = self._require_member(chat_id, user_id)
