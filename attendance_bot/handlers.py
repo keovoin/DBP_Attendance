@@ -471,13 +471,19 @@ class AttendanceBot:
             self.states.pop(user_id, None)
             self._send(chat_id, f"Base location set to: {self._base_site_name(self.db.get_member(user_id))}")
 
+    def _radius(self) -> float:
+        """Effective geofence radius: admin override in the DB, else config."""
+        return self.db.get_geofence_radius(self.config.geofence_radius_meters)
+
     def _late_flag(self) -> bool:
         """True if a clock-in right now counts as late per the work schedule."""
         sched = self.db.get_work_schedule()
         today = timeutil.today_iso(self.tz)
         if not timeutil.is_workday(today, sched.days):
             return False
-        return timeutil.is_time_after(timeutil.now(self.tz), sched.start)
+        return timeutil.is_after_with_grace(
+            timeutil.now(self.tz), sched.start, sched.grace_minutes
+        )
 
     def _do_remote_clock_in(self, chat_id: int, user_id: int, member: Member) -> None:
         now = timeutil.now_iso(self.tz)
@@ -552,7 +558,7 @@ class AttendanceBot:
         )
         self.states.pop(user_id, None)
 
-        radius = self.config.geofence_radius_meters
+        radius = self._radius()
         if distance > radius:
             self._send(
                 chat_id,
@@ -827,7 +833,7 @@ class AttendanceBot:
         self._send(
             chat_id,
             f"Default on-site location set to ({lat}, {lon}). On-site clock-ins "
-            f"are validated within {self.config.geofence_radius_meters:.0f} meters.",
+            f"are validated within {self._radius():.0f} meters.",
         )
 
     def _cmd_promote(self, chat_id: int, user_id: int, arg_str: str) -> None:

@@ -29,12 +29,18 @@ CFG_WORK_START = "work_start"            # HH:MM
 CFG_WORK_END = "work_end"                # HH:MM
 CFG_WORK_DAYS = "work_days"              # comma list of weekday indexes (Mon=0)
 CFG_REMINDERS = "reminders_enabled"      # "1" / "0"
+CFG_GRACE_MINUTES = "grace_minutes"      # minutes after start before "late"
+CFG_AUTO_CLOCKOUT = "auto_clockout_enabled"   # "1" / "0"
+CFG_AUTO_CLOCKOUT_TIME = "auto_clockout_time"  # HH:MM
+CFG_GEOFENCE_RADIUS = "geofence_radius"  # meters (overrides env default)
 CFG_LAST_MORNING = "last_morning_reminder"
 CFG_LAST_EVENING = "last_evening_reminder"
+CFG_LAST_AUTO_CLOCKOUT = "last_auto_clockout"
 
 DEFAULT_WORK_START = "09:00"
 DEFAULT_WORK_END = "17:00"
 DEFAULT_WORK_DAYS = "0,1,2,3,4"          # Mon-Fri
+DEFAULT_AUTO_CLOCKOUT_TIME = "23:59"
 
 
 @dataclass
@@ -83,6 +89,9 @@ class WorkSchedule:
     end: str = DEFAULT_WORK_END
     days: set = field(default_factory=lambda: {0, 1, 2, 3, 4})
     reminders_enabled: bool = True
+    grace_minutes: int = 0
+    auto_clockout_enabled: bool = True
+    auto_clockout_time: str = DEFAULT_AUTO_CLOCKOUT_TIME
 
 
 class Database:
@@ -342,6 +351,27 @@ class Database:
         )
         self.conn.commit()
 
+    def list_open_entries(self, date: str) -> list[AttendanceEntry]:
+        """All members' entries for a date that are clocked in but not out."""
+        rows = self.conn.execute(
+            """
+            SELECT a.*, m.name AS member_name
+            FROM attendance a JOIN members m ON m.telegram_id = a.telegram_id
+            WHERE a.date = ? AND a.clock_in_time IS NOT NULL
+              AND a.clock_out_time IS NULL
+            ORDER BY a.id ASC
+            """,
+            (date,),
+        ).fetchall()
+        return [self._row_to_entry(r) for r in rows]
+
+    def set_is_late(self, entry_id: int, is_late: int) -> None:
+        self.conn.execute(
+            "UPDATE attendance SET is_late = ? WHERE id = ?",
+            (int(is_late), entry_id),
+        )
+        self.conn.commit()
+
     def set_late_remark(self, entry_id: int, remark: str) -> None:
         self.conn.execute(
             "UPDATE attendance SET late_remark = ? WHERE id = ?", (remark, entry_id)
@@ -450,15 +480,46 @@ class Database:
             if part.isdigit():
                 days.add(int(part))
         reminders = (self.get_config(CFG_REMINDERS) or "1") == "1"
-        return WorkSchedule(start=start, end=end, days=days, reminders_enabled=reminders)
+        grace_raw = self.get_config(CFG_GRACE_MINUTES)
+        grace = int(grace_raw) if grace_raw and grace_raw.isdigit() else 0
+        auto = (self.get_config(CFG_AUTO_CLOCKOUT) or "1") == "1"
+        auto_time = self.get_config(CFG_AUTO_CLOCKOUT_TIME) or DEFAULT_AUTO_CLOCKOUT_TIME
+        return WorkSchedule(
+            start=start, end=end, days=days, reminders_enabled=reminders,
+            grace_minutes=grace, auto_clockout_enabled=auto,
+            auto_clockout_time=auto_time,
+        )
 
     def set_work_schedule(
-        self, start: str, end: str, days: set, reminders_enabled: bool
+        self,
+        start: str,
+        end: str,
+        days: set,
+        reminders_enabled: bool,
+        grace_minutes: int = 0,
+        auto_clockout_enabled: bool = True,
+        auto_clockout_time: str = DEFAULT_AUTO_CLOCKOUT_TIME,
     ) -> None:
         self.set_config(CFG_WORK_START, start)
         self.set_config(CFG_WORK_END, end)
         self.set_config(CFG_WORK_DAYS, ",".join(str(d) for d in sorted(days)))
         self.set_config(CFG_REMINDERS, "1" if reminders_enabled else "0")
+        self.set_config(CFG_GRACE_MINUTES, str(int(grace_minutes)))
+        self.set_config(CFG_AUTO_CLOCKOUT, "1" if auto_clockout_enabled else "0")
+        self.set_config(CFG_AUTO_CLOCKOUT_TIME, auto_clockout_time)
+
+    def get_geofence_radius(self, default: float) -> float:
+        """Configured geofence radius (meters), falling back to ``default``."""
+        raw = self.get_config(CFG_GEOFENCE_RADIUS)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            return default
+
+    def set_geofence_radius(self, meters: float) -> None:
+        self.set_config(CFG_GEOFENCE_RADIUS, repr(float(meters)))
 
     # ------------------------------------------------------------------ #
     # Sites

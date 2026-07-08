@@ -342,6 +342,9 @@ class _PortalHandler(BaseHTTPRequestHandler):
             "/sites/delete": self._delete_site,
             "/settings/location": self._set_location,
             "/settings/schedule": self._set_schedule,
+            "/settings/geofence": self._set_geofence,
+            "/settings/recalc-late": self._recalc_late,
+            "/members/bulk": self._bulk_add_members,
         }
         action = actions.get(path)
         if action is None:
@@ -474,6 +477,33 @@ class _PortalHandler(BaseHTTPRequestHandler):
         end_v = end if timeutil.is_valid_date(end) else None
         return member_param, start, end, telegram_id, start_v, end_v
 
+    def _preset_links(self, path: str, keep: dict | None = None) -> str:
+        """Quick date-range buttons (Today / Last 7 days / This week / month / All)."""
+        from datetime import timedelta
+        tz = self.config.tz_offset_hours
+        now = timeutil.now(tz)
+        today = now.strftime("%Y-%m-%d")
+        last7 = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+        wk_s, wk_e = timeutil.week_range(now)
+        mo_s, mo_e = timeutil.month_range(now)
+        keep = keep or {}
+
+        def link(label, frm, to):
+            qp = dict(keep, **{"from": frm, "to": to})
+            return (f'<a class="btn secondary" href="{path}?'
+                    f'{urllib.parse.urlencode(qp)}">{label}</a>')
+
+        return (
+            '<div style="margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap">'
+            + link("Today", today, today)
+            + link("Last 7 days", last7, today)
+            + link("This week", wk_s, wk_e)
+            + link("This month", mo_s, mo_e)
+            + f'<a class="btn secondary" href="{path}?'
+            + urllib.parse.urlencode(dict(keep, **{"from": "", "to": ""}))
+            + '">All</a></div>'
+        )
+
     def _attendance_page(self, params) -> bytes:
         member_param, start, end, tid, start_v, end_v = self._parse_filter(params)
         entries = self.db.query_attendance(tid, start_v, end_v)
@@ -487,6 +517,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         body = f"""
         <h1>Attendance</h1>
         {self._flash(params)}
+        {self._preset_links("/attendance", {"member": member_param})}
         <form class="filters" method="get" action="/attendance">
           <div><label>Member</label><select name="member">{''.join(options)}</select></div>
           <div><label>From</label><input type="date" name="from" value="{_attr(start)}"></div>
@@ -582,6 +613,19 @@ class _PortalHandler(BaseHTTPRequestHandler):
           </form>
           <p class="muted" style="margin-bottom:0">Telegram ID must be the person's
           real numeric ID (from @userinfobot); or they can /register themselves.</p>
+        </div>
+        <div class="panel">
+          <h2>Bulk add members</h2>
+          <p class="muted">Paste one member per line, comma-separated:
+          <code>telegram_id, name, unit, coordinator, role</code>.
+          Only ID and name are required; role is <code>regular</code> or
+          <code>admin</code> (default regular). A header row is ignored.</p>
+          <form method="post" action="/members/bulk">
+            <textarea name="bulk" rows="6" style="width:100%"
+              placeholder="123456789, Sok Dara, Engineering, Sophea, regular
+987654321, Chan Nary, Operations, Vuthy, admin"></textarea>
+            <div style="margin-top:12px"><button type="submit">Import members</button></div>
+          </form>
         </div>
         <table><tr><th>Name</th><th>Role</th><th>Unit</th><th>Base site</th>
         <th>Coordinator</th><th>Telegram ID</th><th></th></tr>{rows}</table>
@@ -683,6 +727,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             f'<div class="lbl">{_e(lbl)}</div></div>' for n, lbl in cards)
         body = f"""
         <h1>Analytics</h1>
+        {self._preset_links("/analytics")}
         <form class="filters" method="get" action="/analytics">
           <div><label>From</label><input type="date" name="from" value="{_attr(start_v)}"></div>
           <div><label>To</label><input type="date" name="to" value="{_attr(end_v)}"></div>
@@ -758,7 +803,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
     def _settings_page(self, params) -> bytes:
         loc = self.db.get_configured_location()
         latv, lonv = (str(loc[0]), str(loc[1])) if loc else ("", "")
-        radius = self.config.geofence_radius_meters
+        radius = self.db.get_geofence_radius(self.config.geofence_radius_meters)
 
         sites = self.db.list_sites()
         site_rows = ""
@@ -780,6 +825,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             day_checks += (f'<label><input type="checkbox" name="day_{i}" value="1" '
                            f'{checked}> {name}</label>')
         rem_checked = "checked" if sched.reminders_enabled else ""
+        auto_checked = "checked" if sched.auto_clockout_enabled else ""
 
         audit = self.db.list_audit(limit=15)
         audit_rows = "".join(
@@ -800,7 +846,14 @@ class _PortalHandler(BaseHTTPRequestHandler):
               <div><label>Longitude</label><input name="longitude" value="{_attr(lonv)}"></div>
               <div><button type="submit">Save</button></div>
             </form>
-            <p class="muted" style="margin-bottom:0">Geofence radius: {radius:.0f} m.</p>
+            <h2 style="margin-top:18px">Geofence radius</h2>
+            <form class="stack" method="post" action="/settings/geofence">
+              <div><label>Radius (meters)</label>
+                <input name="radius" value="{radius:.0f}"></div>
+              <div><button type="submit">Save radius</button></div>
+            </form>
+            <p class="muted" style="margin-bottom:0">On-site clock-ins must be
+            within this distance of a site.</p>
           </div>
           <div class="panel">
             <h2>Work schedule</h2>
@@ -808,15 +861,34 @@ class _PortalHandler(BaseHTTPRequestHandler):
               <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end">
                 <div><label>Start</label><input type="time" name="start" value="{_attr(sched.start)}"></div>
                 <div><label>End</label><input type="time" name="end" value="{_attr(sched.end)}"></div>
+                <div><label>Late grace (min)</label>
+                  <input type="number" name="grace" min="0" value="{sched.grace_minutes}"></div>
               </div>
               <p class="muted" style="margin:12px 0 4px">Working days</p>
               <div class="checks">{day_checks}</div>
-              <p class="muted" style="margin:12px 0 4px">Reminders</p>
-              <div class="checks"><label><input type="checkbox" name="reminders" value="1"
-                {rem_checked}> Send daily clock-in / clock-out reminders</label></div>
+              <p class="muted" style="margin:12px 0 4px">Reminders &amp; auto clock-out</p>
+              <div class="checks">
+                <label><input type="checkbox" name="reminders" value="1"
+                  {rem_checked}> Daily reminders</label>
+                <label><input type="checkbox" name="auto_clockout" value="1"
+                  {auto_checked}> Auto clock-out at</label>
+                <input type="time" name="auto_clockout_time" value="{_attr(sched.auto_clockout_time)}"
+                  style="width:auto">
+              </div>
               <div style="margin-top:14px"><button type="submit">Save schedule</button></div>
             </form>
+            <p class="muted" style="margin-bottom:0">"Late grace" = minutes after
+            the start time before a clock-in is marked late.</p>
           </div>
+        </div>
+        <div class="panel">
+          <h2>Recalculate late flags</h2>
+          <p class="muted">Re-evaluate every attendance record against the current
+          work schedule and grace period (fixes records wrongly marked late/on-time).</p>
+          <form method="post" action="/settings/recalc-late"
+                onsubmit="return confirm('Recalculate late flags for all records?')">
+            <button type="submit">Recalculate now</button>
+          </form>
         </div>
         <div class="panel">
           <h2>Sites</h2>
@@ -856,6 +928,49 @@ class _PortalHandler(BaseHTTPRequestHandler):
                               timeutil.now_iso(self.config.tz_offset_hours), unit, base)
         self._audit("member.add", f"{name} ({tid_int})")
         self._flash_redirect("/members", ok=f"Added member: {name}.")
+
+    def _bulk_add_members(self, form) -> None:
+        """Bulk-create members from pasted lines.
+
+        Each line: ``telegram_id, name, unit, coordinator, role`` (only the ID
+        and name are required). Commas or tabs separate fields. A header row and
+        blank lines are ignored. Existing IDs are skipped.
+        """
+        raw = form.get("bulk", "")
+        now = timeutil.now_iso(self.config.tz_offset_hours)
+        added = skipped = errors = 0
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.replace("\t", ",").split(",")]
+            tid = parts[0] if parts else ""
+            if not tid.lstrip("-").isdigit():
+                # Silently ignore an obvious header row; otherwise count as error.
+                if tid.lower() not in ("telegram_id", "id", "telegram id", "telegramid"):
+                    errors += 1
+                continue
+            name = parts[1] if len(parts) > 1 else ""
+            if not name:
+                errors += 1
+                continue
+            unit = parts[2] if len(parts) > 2 and parts[2] else None
+            coordinator = parts[3] if len(parts) > 3 and parts[3] else None
+            role = parts[4].lower() if len(parts) > 4 and parts[4] else ROLE_REGULAR
+            if role not in (ROLE_ADMIN, ROLE_REGULAR):
+                role = ROLE_REGULAR
+            tid_int = int(tid)
+            if self.db.get_member(tid_int) is not None:
+                skipped += 1
+                continue
+            self.db.create_member(tid_int, name, role, coordinator, now, unit, None)
+            added += 1
+        self._audit("member.bulk", f"added={added} skipped={skipped} errors={errors}")
+        self._flash_redirect(
+            "/members",
+            ok=f"Bulk import complete: {added} added, {skipped} already existed, "
+            f"{errors} invalid line(s).",
+        )
 
     def _update_member(self, form) -> None:
         tid = form.get("telegram_id", "").strip()
@@ -977,9 +1092,52 @@ class _PortalHandler(BaseHTTPRequestHandler):
             return
         days = {i for i in range(7) if form.get(f"day_{i}") == "1"}
         reminders = form.get("reminders") == "1"
-        self.db.set_work_schedule(start, end, days, reminders)
-        self._audit("schedule.set", f"{start}-{end} days={sorted(days)} rem={reminders}")
+        auto = form.get("auto_clockout") == "1"
+        auto_time = form.get("auto_clockout_time", "").strip()
+        if not timeutil.is_valid_hhmm(auto_time):
+            auto_time = "23:59"
+        try:
+            grace = max(0, int(form.get("grace", "0") or "0"))
+        except ValueError:
+            grace = 0
+        self.db.set_work_schedule(start, end, days, reminders, grace, auto, auto_time)
+        self._audit(
+            "schedule.set",
+            f"{start}-{end} days={sorted(days)} grace={grace} rem={reminders} "
+            f"auto={auto}@{auto_time}",
+        )
         self._flash_redirect("/settings", ok="Work schedule saved.")
+
+    def _set_geofence(self, form) -> None:
+        try:
+            radius = float(form.get("radius", "").strip())
+        except ValueError:
+            self._flash_redirect("/settings", err="Radius must be a number.")
+            return
+        if radius <= 0 or radius > 100000:
+            self._flash_redirect("/settings", err="Radius must be between 1 and 100000 m.")
+            return
+        self.db.set_geofence_radius(radius)
+        self._audit("geofence.set", f"{radius:.0f} m")
+        self._flash_redirect("/settings", ok=f"Geofence radius set to {radius:.0f} m.")
+
+    def _recalc_late(self, form) -> None:
+        sched = self.db.get_work_schedule()
+        changed = 0
+        for e in self.db.query_attendance():
+            dt = timeutil.parse_dt(e.clock_in_time)
+            if dt is None:
+                continue
+            wd = timeutil.weekday_of(e.date)
+            late = 1 if (
+                wd in sched.days
+                and timeutil.is_after_with_grace(dt, sched.start, sched.grace_minutes)
+            ) else 0
+            if late != (e.is_late or 0):
+                self.db.set_is_late(e.id, late)
+                changed += 1
+        self._audit("late.recalc", f"{changed} record(s) updated")
+        self._flash_redirect("/settings", ok=f"Recalculated late flags: {changed} updated.")
 
     # ================================================================== #
     # Exports

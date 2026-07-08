@@ -112,6 +112,21 @@ def is_time_after(dt: datetime, hhmm: str) -> bool:
     return dt > threshold
 
 
+def is_after_with_grace(dt: datetime, hhmm: str, grace_minutes: int = 0) -> bool:
+    """True if ``dt`` is later than ``HH:MM`` plus a grace window (minutes).
+
+    Used for late detection so an admin can allow a few minutes' leeway before
+    a clock-in counts as late.
+    """
+    if not is_valid_hhmm(hhmm):
+        return False
+    hour, minute = (int(x) for x in hhmm.split(":"))
+    threshold = dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if grace_minutes:
+        threshold += timedelta(minutes=grace_minutes)
+    return dt > threshold
+
+
 def month_range(dt: datetime) -> tuple[str, str]:
     """Return (first_day, last_day) ISO dates for the month of ``dt``."""
     first = dt.replace(day=1)

@@ -20,7 +20,12 @@ from datetime import datetime
 
 from . import timeutil
 from .config import Config
-from .db import CFG_LAST_EVENING, CFG_LAST_MORNING, Database
+from .db import (
+    CFG_LAST_AUTO_CLOCKOUT,
+    CFG_LAST_EVENING,
+    CFG_LAST_MORNING,
+    Database,
+)
 
 logger = logging.getLogger("attendance_bot.scheduler")
 
@@ -59,33 +64,52 @@ class ReminderScheduler:
         if db is None:
             return
         sched = db.get_work_schedule()
-        if not sched.reminders_enabled:
-            return
         today = now.strftime(timeutil.DATE_FMT)
-        if now.weekday() not in sched.days:
-            return
         now_hhmm = now.strftime("%H:%M")
-        members = db.list_members()
+        is_workday = now.weekday() in sched.days
 
-        if now_hhmm >= sched.start and db.get_config(CFG_LAST_MORNING) != today:
-            for m in members:
-                if db.get_entry_by_date(m.telegram_id, today) is None:
-                    self._safe_send(
-                        m.telegram_id,
-                        "\u23F0 Good morning! You haven't clocked in yet today. "
-                        "Send /clockin when you start.",
-                    )
-            db.set_config(CFG_LAST_MORNING, today)
+        # Reminders only run on working days when enabled.
+        if sched.reminders_enabled and is_workday:
+            members = db.list_members()
+            if now_hhmm >= sched.start and db.get_config(CFG_LAST_MORNING) != today:
+                for m in members:
+                    if db.get_entry_by_date(m.telegram_id, today) is None:
+                        self._safe_send(
+                            m.telegram_id,
+                            "\u23F0 Good morning! You haven't clocked in yet today. "
+                            "Send /clockin when you start.",
+                        )
+                db.set_config(CFG_LAST_MORNING, today)
 
-        if now_hhmm >= sched.end and db.get_config(CFG_LAST_EVENING) != today:
-            for m in members:
-                if db.get_open_entry(m.telegram_id, today) is not None:
-                    self._safe_send(
-                        m.telegram_id,
-                        "\U0001F319 You're still clocked in. Remember to "
-                        "/clockout before you leave.",
-                    )
-            db.set_config(CFG_LAST_EVENING, today)
+            if now_hhmm >= sched.end and db.get_config(CFG_LAST_EVENING) != today:
+                for m in members:
+                    if db.get_open_entry(m.telegram_id, today) is not None:
+                        self._safe_send(
+                            m.telegram_id,
+                            "\U0001F319 You're still clocked in. Remember to "
+                            "/clockout before you leave.",
+                        )
+                db.set_config(CFG_LAST_EVENING, today)
+
+        # Auto clock-out runs every day (people can be clocked in on any day).
+        if (
+            sched.auto_clockout_enabled
+            and now_hhmm >= sched.auto_clockout_time
+            and db.get_config(CFG_LAST_AUTO_CLOCKOUT) != today
+        ):
+            self._auto_clock_out(db, today, sched.auto_clockout_time)
+            db.set_config(CFG_LAST_AUTO_CLOCKOUT, today)
+
+    def _auto_clock_out(self, db: Database, date: str, hhmm: str) -> None:
+        """Close any entries still open at the end of the day."""
+        stamp = f"{date} {hhmm}:00"
+        for entry in db.list_open_entries(date):
+            db.set_clock_out(entry.id, stamp)
+            self._safe_send(
+                entry.telegram_id,
+                f"\U0001F6CC You forgot to clock out, so you were automatically "
+                f"clocked out at {hhmm}. If that's wrong, ask an admin to correct it.",
+            )
 
     def _safe_send(self, chat_id: int, text: str) -> None:
         try:

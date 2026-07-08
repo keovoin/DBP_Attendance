@@ -18,10 +18,11 @@ Admins get an optional **web dashboard** in the browser.
 - **Role-based access control** with an easy first-admin bootstrap.
 - **Guided registration** — new members set their real name, unit/department,
   coordinator, and base location (for teams across multiple places/departments).
-- **Auto late-detection** — clock-ins after the work start time are flagged and
-  the member is prompted for a reason.
-- **Daily reminders** — morning "clock in" and evening "clock out" nudges on
-  working days.
+- **Auto late-detection** — clock-ins after the work start time (plus a
+  configurable grace period) are flagged and the member is prompted for a reason.
+- **Daily reminders + auto clock-out** — morning "clock in" and evening "clock
+  out" nudges, and anyone still clocked in is auto-closed at a configurable time
+  (default 23:59).
 - **Multiple sites** — configure several on-site locations; members are
   validated against their assigned base site.
 - **CSV + Excel export** and an **admin web dashboard** with analytics and a map.
@@ -109,17 +110,19 @@ log in with that password, and you get:
   clocked in, on-site vs remote) and a 14-day activity chart.
 - **Attendance** — a filterable table (by member and date range) with one-click
   CSV export.
-- **Attendance** — filter by member/date range; **edit or delete** entries;
-  export to **CSV or Excel (.xlsx)**.
-- **Members** — add, **edit, and delete** members, including unit/department,
-  base site, role, and coordinator.
+- **Attendance** — quick filters (Today / Last 7 days / This week / This month)
+  plus custom member & date-range; **edit or delete** entries; export to
+  **CSV or Excel (.xlsx)**.
+- **Members** — add, **edit, and delete** members (unit/department, base site,
+  role, coordinator) and **bulk-import** many members from pasted CSV lines.
 - **Analytics** — per-member hours worked, days present, late count, on-site vs
   remote, and attendance rate over a chosen date range.
 - **Map** — plots configured sites and on-site clock-in points (Leaflet); click
   the map to grab coordinates and add a new site.
-- **Settings** — the default on-site location, **multiple named sites**, the
-  **work schedule** (start/end times, working days, reminders on/off), and an
-  **audit log** of admin changes.
+- **Settings** — the default on-site location, the **geofence radius**,
+  **multiple named sites**, the **work schedule** (start/end times, working
+  days, **late grace period**, reminders on/off, **auto clock-out time**), a
+  **"recalculate late flags"** action, and an **audit log** of admin changes.
 
 The dashboard is protected by a signed `HttpOnly` session cookie, and shares the
 bot's database (SQLite in WAL mode for safe concurrent reads). All admin write
