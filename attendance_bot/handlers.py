@@ -580,6 +580,8 @@ class AttendanceBot:
         msg = (
             f"\u2705 Clocked in (On_Site) at {now}.\n"
             f"Site: {best_site.name} ({distance:.0f} m away)\n"
+            f"\U0001F4CD Location: {lat:.6f}, {lon:.6f}\n"
+            f"Map: https://www.google.com/maps?q={lat},{lon}\n"
             f"Coordinator: {member.coordinator}"
         )
         self.client.send_message(

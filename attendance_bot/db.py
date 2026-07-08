@@ -388,17 +388,20 @@ class Database:
         coordinator: Optional[str],
         late_remark: Optional[str],
         is_late: int = 0,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
     ) -> None:
         self.conn.execute(
             """
             UPDATE attendance
             SET date = ?, clock_in_time = ?, clock_out_time = ?, clock_in_type = ?,
-                coordinator = ?, late_remark = ?, is_late = ?
+                coordinator = ?, late_remark = ?, is_late = ?,
+                latitude = ?, longitude = ?
             WHERE id = ?
             """,
             (date, clock_in_time or None, clock_out_time or None,
              clock_in_type or None, coordinator or None, late_remark or None,
-             int(is_late), entry_id),
+             int(is_late), latitude, longitude, entry_id),
         )
         self.conn.commit()
 

@@ -95,8 +95,8 @@ The bot uses long polling, so no public URL or webhook is needed.
 1. `/clockin` → tap **On_Site**.
 2. The bot asks you to share your location (tap the location button).
 3. It computes the distance to the configured location. Within the radius
-   (100 m by default) → the entry is created and your coordinates are stored;
-   otherwise it's rejected.
+   (100 m by default) → the entry is created, your **coordinates are stored and
+   shown back to you with a map link**; otherwise it's rejected.
 
 An Admin must run `/setlocation` first, or on-site clock-in is refused.
 
@@ -111,8 +111,10 @@ log in with that password, and you get:
 - **Attendance** — a filterable table (by member and date range) with one-click
   CSV export.
 - **Attendance** — quick filters (Today / Last 7 days / This week / This month)
-  plus custom member & date-range; **edit or delete** entries; export to
-  **CSV or Excel (.xlsx)**.
+  plus custom member & date-range; a **Location** column with a map link for
+  On_Site clock-ins; **edit or delete** entries — admins can adjust the
+  **arrival/clock-in time, out time, on-time/late status, and GPS coordinates**;
+  export to **CSV or Excel (.xlsx)**.
 - **Members** — add, **edit, and delete** members (unit/department, base site,
   role, coordinator) and **bulk-import** many members by **uploading an Excel
   (.xlsx) or CSV file** (or pasting rows); a template is downloadable.

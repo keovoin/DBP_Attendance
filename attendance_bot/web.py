@@ -466,7 +466,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         )
         recent = sorted(entries, key=lambda e: (e.date, e.id), reverse=True)[:10]
         rows = "".join(self._entry_row(e) for e in recent) or \
-            '<tr><td colspan="7" class="muted">No attendance yet.</td></tr>'
+            '<tr><td colspan="8" class="muted">No attendance yet.</td></tr>'
         body = f"""
         <h1>Dashboard</h1>
         <p class="muted">As of {_e(today)} (UTC{tz:+g}).</p>
@@ -475,7 +475,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         {self._recent_chart(entries, tz)}
         <h2>Recent activity</h2>
         <table><tr><th>Date</th><th>Member</th><th>In</th><th>Out</th>
-        <th>Type</th><th>Coordinator</th><th>Late</th></tr>{rows}</table>
+        <th>Type</th><th>Coordinator</th><th>Location</th><th>Late</th></tr>{rows}</table>
         """
         return layout("Dashboard", body, active="dash")
 
@@ -504,8 +504,16 @@ class _PortalHandler(BaseHTTPRequestHandler):
             f"<tr><td>{_e(e.date)}</td><td>{_e(e.member_name)}</td>"
             f"<td>{_e(e.clock_in_time)}</td><td>{_e(e.clock_out_time)}</td>"
             f"<td>{self._type_badge(e.clock_in_type)}</td>"
-            f"<td>{_e(e.coordinator)}</td><td>{late}</td>{edit}</tr>"
+            f"<td>{_e(e.coordinator)}</td>{self._loc_cell(e)}"
+            f"<td>{late}</td>{edit}</tr>"
         )
+
+    def _loc_cell(self, e) -> str:
+        if e.latitude is not None and e.longitude is not None:
+            url = f"https://www.google.com/maps?q={e.latitude},{e.longitude}"
+            return (f'<td><a href="{url}" target="_blank" rel="noopener">'
+                    f'\U0001F4CD {e.latitude:.5f}, {e.longitude:.5f}</a></td>')
+        return "<td>&mdash;</td>"
 
     # ================================================================== #
     # Attendance (with edit links)
@@ -559,7 +567,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             sel = " selected" if str(m.telegram_id) == member_param else ""
             options.append(f'<option value="{m.telegram_id}"{sel}>{_e(m.name)}</option>')
         rows = "".join(self._entry_row(e, editable=True) for e in entries) or \
-            '<tr><td colspan="8" class="muted">No records.</td></tr>'
+            '<tr><td colspan="9" class="muted">No records.</td></tr>'
         qs = urllib.parse.urlencode({"member": member_param, "from": start, "to": end})
         body = f"""
         <h1>Attendance</h1>
@@ -575,7 +583,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         </form>
         <p class="muted">{len(entries)} record(s).</p>
         <table><tr><th>Date</th><th>Member</th><th>In</th><th>Out</th><th>Type</th>
-        <th>Coordinator</th><th>Late</th><th></th></tr>{rows}</table>
+        <th>Coordinator</th><th>Location</th><th>Late</th><th></th></tr>{rows}</table>
         """
         return layout("Attendance", body, active="att")
 
@@ -591,7 +599,14 @@ class _PortalHandler(BaseHTTPRequestHandler):
 
         def opt(v):
             return " selected" if e.clock_in_type == v else ""
-        late_checked = "checked" if e.is_late else ""
+        on_sel = " selected" if not e.is_late else ""
+        late_sel = " selected" if e.is_late else ""
+        maplink = ""
+        if e.latitude is not None and e.longitude is not None:
+            maplink = (
+                f' &nbsp;<a href="https://www.google.com/maps?q={e.latitude},'
+                f'{e.longitude}" target="_blank" rel="noopener">view on map</a>'
+            )
         body = f"""
         <h1>Edit attendance entry</h1>
         <p class="muted">{_e(e.member_name)} (ID {e.telegram_id})</p>
@@ -599,10 +614,14 @@ class _PortalHandler(BaseHTTPRequestHandler):
           <form class="stack" method="post" action="/entry/update">
             <input type="hidden" name="id" value="{e.id}">
             <div><label>Date</label><input type="date" name="date" value="{_attr(e.date)}"></div>
-            <div><label>Clock in (YYYY-MM-DD HH:MM:SS)</label>
+            <div><label>Arrival / clock-in (YYYY-MM-DD HH:MM:SS)</label>
               <input name="clock_in_time" value="{_attr(e.clock_in_time)}"></div>
-            <div><label>Clock out</label>
+            <div><label>Clock-out / out time</label>
               <input name="clock_out_time" value="{_attr(e.clock_out_time)}"></div>
+            <div><label>Status</label><select name="is_late">
+              <option value="0"{on_sel}>On time</option>
+              <option value="1"{late_sel}>Late</option>
+            </select></div>
             <div><label>Type</label><select name="clock_in_type">
               <option value=""{opt(None)}>(none)</option>
               <option value="Remote"{opt(TYPE_REMOTE)}>Remote</option>
@@ -610,10 +629,12 @@ class _PortalHandler(BaseHTTPRequestHandler):
             </select></div>
             <div><label>Coordinator</label>
               <input name="coordinator" value="{_attr(e.coordinator)}"></div>
+            <div><label>Latitude{maplink}</label>
+              <input name="latitude" value="{_attr(e.latitude)}"></div>
+            <div><label>Longitude</label>
+              <input name="longitude" value="{_attr(e.longitude)}"></div>
             <div style="flex-basis:100%"><label>Late remark</label>
               <input name="late_remark" value="{_attr(e.late_remark)}"></div>
-            <div class="checks"><label><input type="checkbox" name="is_late" value="1"
-              {late_checked}> Marked late</label></div>
             <div><button type="submit">Save</button>
               <a class="btn secondary" href="/attendance">Cancel</a></div>
           </form>
@@ -1091,6 +1112,16 @@ class _PortalHandler(BaseHTTPRequestHandler):
         if not timeutil.is_valid_date(date):
             self._flash_redirect(f"/entry?id={entry_id}", err="Invalid date.")
             return
+
+        def _coord(name):
+            raw = form.get(name, "").strip()
+            if not raw:
+                return None
+            try:
+                return float(raw)
+            except ValueError:
+                return None
+
         self.db.update_entry(
             entry_id, date,
             form.get("clock_in_time", "").strip() or None,
@@ -1099,6 +1130,8 @@ class _PortalHandler(BaseHTTPRequestHandler):
             form.get("coordinator", "").strip() or None,
             form.get("late_remark", "").strip() or None,
             1 if form.get("is_late") == "1" else 0,
+            _coord("latitude"),
+            _coord("longitude"),
         )
         self._audit("entry.update", f"entry {entry_id} on {date}")
         self._flash_redirect("/attendance", ok="Entry updated.")
