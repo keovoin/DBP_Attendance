@@ -68,6 +68,10 @@ class Database:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # WAL lets the web portal read the database concurrently while the bot
+        # thread writes to it, without "database is locked" errors.
+        if path != ":memory:":
+            self.conn.execute("PRAGMA journal_mode = WAL")
         self._create_schema()
 
     def close(self) -> None:
@@ -166,6 +170,13 @@ class Database:
         """Case-insensitive lookup used to resolve a Member by display name."""
         rows = self.conn.execute(
             "SELECT * FROM members WHERE lower(name) = lower(?)", (name,)
+        ).fetchall()
+        return [self._row_to_member(r) for r in rows]
+
+    def list_members(self) -> list[Member]:
+        """Return all members, ordered by name (used by the web portal)."""
+        rows = self.conn.execute(
+            "SELECT * FROM members ORDER BY name COLLATE NOCASE ASC"
         ).fetchall()
         return [self._row_to_member(r) for r in rows]
 

@@ -2,20 +2,23 @@
 
 A Telegram bot that lets a team record daily attendance with **clock-in** and
 **clock-out** actions directly in Telegram. Clock-in supports two modes —
-**Remote** and **On_Site** — where On_Site is only allowed within **20 meters**
-of an admin-configured location. Access is role-based: **Regular Users** see
-only their own records, while **Admins** see everyone's. Members and Admins can
-export attendance reports as CSV files.
+**Remote** and **On_Site** — where On_Site is only allowed within a configurable
+radius (**100 meters** by default) of an admin-configured location. Access is
+role-based: **Regular Users** see only their own records, while **Admins** see
+everyone's. Members and Admins can export attendance reports as CSV files, and
+Admins get an optional **web dashboard** in the browser.
 
 ## Highlights
 
 - **Zero third-party dependencies.** Runs on the Python 3.10+ standard library
-  only (`urllib`, `sqlite3`, `csv`, `json`, `math`, `datetime`). No
-  `pip install` step is required.
+  only (`urllib`, `sqlite3`, `csv`, `json`, `math`, `datetime`, `http.server`).
+  No `pip install` step is required.
 - **SQLite data store** — a single file, created automatically.
 - **Geofenced on-site clock-in** using the haversine distance formula.
 - **Role-based access control** with an easy first-admin bootstrap.
 - **CSV export** delivered as a downloadable Telegram document.
+- **Admin web dashboard** — an optional browser portal with summary stats, a
+  recent-activity chart, a filterable attendance table, and CSV export.
 
 ## Getting started
 
@@ -38,8 +41,11 @@ Edit `.env` and set at least:
 | `DB_PATH` | SQLite file path (default `data/attendance.db`). |
 | `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs auto-granted Admin on registration. Use this to create the first Admin. Find your ID via [@userinfobot](https://t.me/userinfobot). |
 | `TZ_OFFSET_HOURS` | UTC offset for timestamps and "today" logic. Default `7` = Cambodia / Indochina Time (ICT). Other examples: `0` UTC, `-5` US Eastern. |
-| `GEOFENCE_RADIUS_METERS` | On-site radius. The spec fixes this at `20`. |
+| `GEOFENCE_RADIUS_METERS` | On-site radius in meters. Default `100`. |
 | `POLL_TIMEOUT_SECONDS` | Long-polling timeout for `getUpdates`. |
+| `ADMIN_PORTAL_PASSWORD` | Optional. Set a password to enable the admin web dashboard. Empty = dashboard off. |
+| `PORTAL_SECRET` | Optional. Signs dashboard login cookies (defaults to `BOT_TOKEN`). |
+| `PORT` | Web/health server port (default `8080`). |
 
 > **Bootstrapping the first Admin:** the `/promote` command requires Admin
 > access, so at least one Admin must be seeded via `ADMIN_TELEGRAM_IDS`. Put
@@ -76,10 +82,27 @@ The bot uses long polling, so no public URL or webhook is needed.
 
 1. `/clockin` → tap **On_Site**.
 2. The bot asks you to share your location (tap the location button).
-3. It computes the distance to the configured location. Within 20 m → the
-   entry is created and your coordinates are stored; otherwise it's rejected.
+3. It computes the distance to the configured location. Within the radius
+   (100 m by default) → the entry is created and your coordinates are stored;
+   otherwise it's rejected.
 
 An Admin must run `/setlocation` first, or on-site clock-in is refused.
+
+## Admin web dashboard (optional)
+
+Set `ADMIN_PORTAL_PASSWORD` and the app also serves a browser dashboard on
+`PORT` (8080). Open the app URL (on Fly.io: `https://dbp-attendance.fly.dev`),
+log in with that password, and you get:
+
+- **Dashboard** — summary cards (members, admins, clock-ins today, currently
+  clocked in, on-site vs remote) and a 14-day activity chart.
+- **Attendance** — a filterable table (by member and date range) with one-click
+  CSV export.
+- **Members** — everyone's role, coordinator, and registration date.
+
+The dashboard is read-only, protected by a signed `HttpOnly` session cookie,
+and shares the bot's database (SQLite in WAL mode for safe concurrent reads).
+If `ADMIN_PORTAL_PASSWORD` is empty, only a health endpoint is served.
 
 ## Project layout
 
@@ -95,6 +118,8 @@ attendance_bot/
   reports.py        # CSV export and text rendering
   telegram_api.py   # minimal stdlib Telegram Bot API client
   timeutil.py       # timezone-offset time helpers
+  web.py            # admin web dashboard (stdlib http.server)
+  health.py         # minimal health endpoint (when dashboard is off)
 main.py             # convenience launcher
 tests/              # pytest suite covering every acceptance criterion
 ```

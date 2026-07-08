@@ -56,12 +56,17 @@ class Config:
     db_path: str = "data/attendance.db"
     admin_telegram_ids: set[int] = field(default_factory=set)
     tz_offset_hours: float = 7.0  # Cambodia / Indochina Time (ICT, UTC+7)
-    geofence_radius_meters: float = 20.0
+    geofence_radius_meters: float = 100.0
     poll_timeout_seconds: int = 30
-    # Port for the health-check HTTP server. Must match `internal_port` in
+    # Port for the web/health HTTP server. Must match `internal_port` in
     # fly.toml (or the equivalent on other hosts). Read from PORT so most
     # platforms "just work".
     health_port: int = 8080
+    # Admin web portal. If a password is set, the bot also serves a browser
+    # dashboard on `health_port`; if empty, only a minimal health endpoint runs.
+    admin_portal_password: str = ""
+    # Secret used to sign portal session cookies (falls back to the bot token).
+    portal_secret: str = ""
 
     @classmethod
     def from_env(cls, *, require_token: bool = True) -> "Config":
@@ -93,7 +98,11 @@ class Config:
                 os.environ.get("ADMIN_TELEGRAM_IDS", "")
             ),
             tz_offset_hours=_float("TZ_OFFSET_HOURS", 7.0),
-            geofence_radius_meters=_float("GEOFENCE_RADIUS_METERS", 20.0),
+            geofence_radius_meters=_float("GEOFENCE_RADIUS_METERS", 100.0),
             poll_timeout_seconds=_int("POLL_TIMEOUT_SECONDS", 30),
             health_port=_int("PORT", 8080),
+            admin_portal_password=os.environ.get(
+                "ADMIN_PORTAL_PASSWORD", ""
+            ).strip(),
+            portal_secret=os.environ.get("PORTAL_SECRET", "").strip() or token,
         )

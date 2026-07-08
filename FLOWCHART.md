@@ -13,9 +13,14 @@ flowchart LR
         TG["Telegram App"]
     end
 
-    subgraph Fly["Fly.io (always-on Machine)"]
-        BOT["Attendance Bot<br/>(python worker)"]
-        DB[("SQLite DB<br/>/data/attendance.db<br/>persistent volume")]
+    subgraph Admin["Admin"]
+        BROWSER["Web Browser"]
+    end
+
+    subgraph Fly["Fly.io (always-on Machine, one process)"]
+        BOT["Attendance Bot<br/>(long-polling worker)"]
+        WEB["Admin Web Dashboard<br/>(http.server)"]
+        DB[("SQLite DB<br/>/data/attendance.db<br/>persistent volume, WAL")]
     end
 
     API["Telegram Bot API"]
@@ -24,7 +29,13 @@ flowchart LR
     BOT -->|long polling: getUpdates| API
     API -->|replies, files| BOT
     BOT <-->|read / write| DB
+    BROWSER <-->|HTTPS login + view| WEB
+    WEB -->|read| DB
 ```
+
+> The bot and the admin dashboard run in **one process on one Machine**, sharing
+> the same SQLite database. The Machine is kept always-on so polling never
+> pauses.
 
 The bot **pulls** messages from Telegram (long polling) and stores everything in
 a SQLite database on a persistent disk, so data survives restarts.
@@ -103,8 +114,8 @@ flowchart TD
     CONF -->|No| REJ2["Reject: no on-site<br/>location configured"]
     CONF -->|Yes| REQ["Ask member to<br/>share location"]
     REQ --> DIST["Measure distance to<br/>configured location"]
-    DIST --> RANGE{"Within 20 meters?"}
-    RANGE -->|No| REJ3["Reject: outside<br/>20-meter range"]
+    DIST --> RANGE{"Within 100 meters?"}
+    RANGE -->|No| REJ3["Reject: outside<br/>100-meter range"]
     RANGE -->|Yes| ONSITE["Record entry<br/>type = On_Site<br/>+ timestamp + coordinator<br/>+ GPS location"]
     ONSITE --> OKO["Confirm clock-in"]
 ```
@@ -173,6 +184,27 @@ flowchart TD
     ACT -->|setlocation| LOC["Save on-site location<br/>(used for all future<br/>On_Site clock-ins)"]
     ACT -->|promote| PRO["Grant Admin role<br/>to the target member"]
 ```
+
+---
+
+## 10. Admin web dashboard access
+
+```mermaid
+flowchart TD
+    OPEN["Admin opens the app URL<br/>(https://dbp-attendance.fly.dev)"] --> AUTH{"Valid session<br/>cookie?"}
+    AUTH -->|No| LOGIN["Show login page"]
+    LOGIN --> PW{"Correct<br/>ADMIN_PORTAL_PASSWORD?"}
+    PW -->|No| LOGIN
+    PW -->|Yes| COOKIE["Set signed session cookie"]
+    COOKIE --> DASH
+    AUTH -->|Yes| DASH["Dashboard:<br/>stats + 14-day chart"]
+    DASH --> PAGES{"Navigate"}
+    PAGES -->|Attendance| TABLE["Filterable table<br/>+ CSV export"]
+    PAGES -->|Members| MEM["Members & roles"]
+```
+
+> The dashboard only runs if `ADMIN_PORTAL_PASSWORD` is set. It is read-only and
+> shares the bot's database.
 
 ---
 

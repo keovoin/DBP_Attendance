@@ -1,11 +1,13 @@
 # Fly.io configuration for the Telegram Attendance Tracker.
 #
-# The bot is a LONG-POLLING WORKER: it only makes OUTBOUND calls to Telegram and
-# receives no inbound web traffic. Fly's proxy auto-stop/auto-suspend feature
-# only manages Machines that sit behind an [http_service]; to that feature a
-# background poller always looks "idle", so it SUSPENDS the machine even though
-# the bot is busy. We therefore deliberately do NOT define an [http_service]
-# here - with no service in front of it, the Machine simply runs 24/7.
+# This app runs BOTH the Telegram bot (long-polling worker) AND the admin web
+# dashboard in a single process on one Machine, sharing one SQLite database.
+#
+# CRITICAL: because the bot is a poller that gets little/no inbound web traffic,
+# Fly's proxy would consider the Machine "idle" and SUSPEND it, pausing the bot.
+# We prevent that with auto_stop_machines = 'off' and min_machines_running = 1,
+# so the Machine runs 24/7. The [http_service] exists so the admin dashboard is
+# reachable in a browser.
 #
 # Ref: https://fly.io/docs/blueprints/long-running-tasks/
 
@@ -15,13 +17,15 @@ primary_region = 'sin'
 [build]
   dockerfile = 'Dockerfile'
 
-# Non-secret configuration. Secrets (BOT_TOKEN, ADMIN_TELEGRAM_IDS) are set
-# by the GitHub Actions deploy workflow / `fly secrets set` and never committed.
+# Non-secret configuration. Secrets (BOT_TOKEN, ADMIN_TELEGRAM_IDS,
+# ADMIN_PORTAL_PASSWORD) are set with `fly secrets set` / the deploy workflow
+# and are never committed.
 [env]
   DB_PATH = '/data/attendance.db'
-  TZ_OFFSET_HOURS = '7'          # Cambodia / Indochina Time (ICT, UTC+7)
-  GEOFENCE_RADIUS_METERS = '20'
+  TZ_OFFSET_HOURS = '7'           # Cambodia / Indochina Time (ICT, UTC+7)
+  GEOFENCE_RADIUS_METERS = '100'
   POLL_TIMEOUT_SECONDS = '30'
+  PORT = '8080'
 
 # Persistent volume for the SQLite database, mounted at /data so attendance
 # history survives deploys and restarts. Create it once with:
@@ -30,8 +34,22 @@ primary_region = 'sin'
   source = 'attendance_data'
   destination = '/data'
 
-# A single always-on Machine. A Telegram bot must be a single poller: two
-# machines calling getUpdates would fight over messages.
+# The admin web dashboard. Kept always-on (never auto-stopped/suspended) so the
+# bot keeps polling. A single Machine only: a Telegram bot must be one poller.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '20s'
+    method = 'get'
+    path = '/health'
+
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '256mb'

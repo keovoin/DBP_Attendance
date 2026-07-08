@@ -29,6 +29,13 @@ website; everything else is automatic.
      | `FLY_API_TOKEN` | the token you copied from Fly |
      | `BOT_TOKEN` | your bot token from @BotFather |
      | `ADMIN_TELEGRAM_IDS` | your numeric Telegram ID from @userinfobot |
+     | `ADMIN_PORTAL_PASSWORD` | *(optional)* a password to open the admin web dashboard |
+
+> **Admin web dashboard:** if you add the optional `ADMIN_PORTAL_PASSWORD`
+> secret, the app also serves a browser dashboard. After deploying, open
+> `https://dbp-attendance.fly.dev` and log in with that password to view stats,
+> a filterable attendance table, and CSV export. If you don't set it, the bot
+> still works fully over Telegram; only the web dashboard is disabled.
 
 **3. Run the deploy (in your browser)**
    - Go to the repo **Actions** tab -> **Deploy to Fly.io** -> **Run workflow**.

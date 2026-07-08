@@ -45,12 +45,15 @@ jobs:
       - name: Install the Fly CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Send the Telegram secrets to Fly (staged for the next deploy)
+      - name: Send the secrets to Fly (staged for the next deploy)
         run: |
-          flyctl secrets set \
-            BOT_TOKEN="${{ secrets.BOT_TOKEN }}" \
-            ADMIN_TELEGRAM_IDS="${{ secrets.ADMIN_TELEGRAM_IDS }}" \
-            --stage --app "$FLY_APP"
+          args=(BOT_TOKEN="${{ secrets.BOT_TOKEN }}" \
+                ADMIN_TELEGRAM_IDS="${{ secrets.ADMIN_TELEGRAM_IDS }}")
+          # Optional: only set the admin dashboard password if you added it.
+          if [ -n "${{ secrets.ADMIN_PORTAL_PASSWORD }}" ]; then
+            args+=(ADMIN_PORTAL_PASSWORD="${{ secrets.ADMIN_PORTAL_PASSWORD }}")
+          fi
+          flyctl secrets set "${args[@]}" --stage --app "$FLY_APP"
 
       - name: Deploy to Fly.io
         run: flyctl deploy --remote-only --app "$FLY_APP"

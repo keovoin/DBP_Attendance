@@ -10,6 +10,7 @@ from .db import Database
 from .handlers import AttendanceBot
 from .health import start_health_server
 from .telegram_api import TelegramClient, TelegramError
+from .web import start_web_portal
 
 logger = logging.getLogger("attendance_bot")
 
@@ -25,12 +26,20 @@ def run() -> None:
     client = TelegramClient(config.bot_token, timeout=config.poll_timeout_seconds)
     bot = AttendanceBot(client, db, config)
 
-    # Start the health-check server early so the hosting platform's proxy can
-    # connect to the machine while we establish the Telegram connection.
+    # Serve HTTP on the machine's port so the hosting platform's proxy can
+    # reach it. If an admin portal password is set, run the full web dashboard;
+    # otherwise run only a minimal health endpoint.
     try:
-        start_health_server(config.health_port)
+        if config.admin_portal_password:
+            start_web_portal(config)
+        else:
+            logger.info(
+                "ADMIN_PORTAL_PASSWORD not set - starting health endpoint only "
+                "(no admin dashboard)."
+            )
+            start_health_server(config.health_port)
     except OSError as exc:
-        logger.warning("Could not start health-check server: %s", exc)
+        logger.warning("Could not start HTTP server: %s", exc)
 
     try:
         me = client.get_me()
