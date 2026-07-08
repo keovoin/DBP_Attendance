@@ -1,38 +1,39 @@
-# Fly.io configuration for the Telegram Attendance Tracker.
+# fly.toml app configuration file generated for dbp-attendance on 2026-07-08T04:28:03Z
 #
-# This bot uses long polling (no inbound HTTP), so there is intentionally NO
-# [http_service] block. Without HTTP services Fly keeps the machine running
-# continuously instead of auto-stopping it, which is exactly what a polling
-# bot needs.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# The app name must be globally unique. Change it, or let `fly launch` pick one.
-app = "dbp-attendance-bot"
 
-# Pick a region close to your users. Examples:
-#   sin = Singapore, hkg = Hong Kong, nrt = Tokyo, fra = Frankfurt, iad = US East
-primary_region = "sin"
+app = 'dbp-attendance'
+primary_region = 'sin'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
-# Non-secret configuration. Secrets (BOT_TOKEN, ADMIN_TELEGRAM_IDS) are set
-# separately with `fly secrets set` so they are never committed to git.
 [env]
+  DB_PATH = '/data/attendance.db'
+  GEOFENCE_RADIUS_METERS = '20'
+  POLL_TIMEOUT_SECONDS = '30'
+  TZ_OFFSET_HOURS = '7'
   DB_PATH = "/data/attendance.db"
   TZ_OFFSET_HOURS = "7"   # Cambodia / Indochina Time (ICT, UTC+7)
   GEOFENCE_RADIUS_METERS = "20"
   POLL_TIMEOUT_SECONDS = "30"
 
-# Persistent volume for the SQLite database. Mounted at /data so attendance
-# history survives deploys and restarts. Create it once with:
-#   fly volumes create attendance_data --region sin --size 1
-[mounts]
-  source = "attendance_data"
-  destination = "/data"
+[[mounts]]
+  source = 'attendance_data'
+  destination = '/data'
 
-# Keep exactly one instance running (a bot must be a single poller: running
-# two copies would cause duplicate replies / getUpdates conflicts).
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 256
