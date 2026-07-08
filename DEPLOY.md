@@ -10,7 +10,44 @@ Everything the bot needs is in this repo:
 - `fly.toml` - app config with the volume mount and non-secret env vars
 - `.dockerignore` - keeps secrets and local files out of the image
 
-## Prerequisites
+## Easiest path: deploy from GitHub (no terminal, no local machine)
+
+This repo includes a GitHub Actions workflow (`.github/workflows/fly-deploy.yml`)
+that deploys to Fly.io for you. You only paste three secrets into the GitHub
+website; everything else is automatic.
+
+**1. Create a Fly deploy token (in your browser)**
+   - Go to <https://fly.io/dashboard> and open the `dbp-attendance` app.
+   - Open its **Tokens** section and create a new token (a "deploy token" is
+     enough). Copy the whole token.
+
+**2. Add three secrets on GitHub (in your browser)**
+   - Go to the repo -> **Settings** -> **Secrets and variables** -> **Actions**.
+   - Click **New repository secret** and add each of these:
+     | Name | Value |
+     | --- | --- |
+     | `FLY_API_TOKEN` | the token you copied from Fly |
+     | `BOT_TOKEN` | your bot token from @BotFather |
+     | `ADMIN_TELEGRAM_IDS` | your numeric Telegram ID from @userinfobot |
+
+**3. Run the deploy (in your browser)**
+   - Go to the repo **Actions** tab -> **Deploy to Fly.io** -> **Run workflow**.
+   - (It also runs automatically on every push.)
+   - Watch it go green. The workflow pushes your Telegram secrets to Fly and
+     deploys. Then message your bot `/register` on Telegram.
+
+> The very first run will fail if you haven't added the three secrets yet - that
+> is expected. Add them and re-run.
+>
+> This requires the Fly app and its data volume to already exist. If you have
+> run `fly launch` once before (which created `dbp-attendance`), you're set. If
+> the deploy complains about a missing volume, create one named
+> `attendance_data` in the Fly dashboard (Volumes) or via
+> `fly volumes create attendance_data --region sin --size 1`.
+
+---
+
+## Prerequisites (CLI alternative)
 
 1. A Telegram bot token from [@BotFather](https://t.me/BotFather).
 2. Your numeric Telegram ID from [@userinfobot](https://t.me/userinfobot)

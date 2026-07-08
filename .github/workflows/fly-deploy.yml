@@ -1,0 +1,56 @@
+name: Deploy to Fly.io
+
+# Runs automatically whenever code is pushed to these branches, and can also be
+# started by hand from the GitHub "Actions" tab (the "Run workflow" button).
+on:
+  push:
+    branches:
+      - main
+      - feat/attendance-tracker-bot
+  workflow_dispatch:
+
+# Never let two deploys run at the same time.
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy bot to Fly.io
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_APP: dbp-attendance
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Verify the required GitHub secrets exist
+        run: |
+          missing=0
+          if [ -z "${{ secrets.FLY_API_TOKEN }}" ]; then
+            echo "::error::GitHub secret FLY_API_TOKEN is missing."; missing=1
+          fi
+          if [ -z "${{ secrets.BOT_TOKEN }}" ]; then
+            echo "::error::GitHub secret BOT_TOKEN is missing."; missing=1
+          fi
+          if [ -z "${{ secrets.ADMIN_TELEGRAM_IDS }}" ]; then
+            echo "::error::GitHub secret ADMIN_TELEGRAM_IDS is missing."; missing=1
+          fi
+          if [ "$missing" -eq 1 ]; then
+            echo "Add the missing secrets under GitHub repo Settings > Secrets and variables > Actions, then re-run."
+            exit 1
+          fi
+
+      - name: Install the Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Send the Telegram secrets to Fly (staged for the next deploy)
+        run: |
+          flyctl secrets set \
+            BOT_TOKEN="${{ secrets.BOT_TOKEN }}" \
+            ADMIN_TELEGRAM_IDS="${{ secrets.ADMIN_TELEGRAM_IDS }}" \
+            --stage --app "$FLY_APP"
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only --app "$FLY_APP"
