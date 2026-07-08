@@ -114,7 +114,8 @@ log in with that password, and you get:
   plus custom member & date-range; **edit or delete** entries; export to
   **CSV or Excel (.xlsx)**.
 - **Members** — add, **edit, and delete** members (unit/department, base site,
-  role, coordinator) and **bulk-import** many members from pasted CSV lines.
+  role, coordinator) and **bulk-import** many members by **uploading an Excel
+  (.xlsx) or CSV file** (or pasting rows); a template is downloadable.
 - **Analytics** — per-member hours worked, days present, late count, on-site vs
   remote, and attendance rate over a chosen date range.
 - **Map** — plots configured sites and on-site clock-in points (Leaflet); click

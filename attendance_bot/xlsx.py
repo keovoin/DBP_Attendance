@@ -10,8 +10,11 @@ This is intentionally tiny - just enough for the attendance report export.
 from __future__ import annotations
 
 import io
+import xml.etree.ElementTree as ET
 import zipfile
 from typing import Iterable, Sequence
+
+_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 _CONTENT_TYPES = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -55,6 +58,14 @@ def _col_letter(index: int) -> str:
         index, rem = divmod(index - 1, 26)
         letters = chr(65 + rem) + letters
     return letters
+
+
+def _col_to_index(letters: str) -> int:
+    """Excel column letters -> 0-based index (A->0, AA->26)."""
+    idx = 0
+    for ch in letters:
+        idx = idx * 26 + (ord(ch.upper()) - 64)
+    return idx - 1
 
 
 def _cell(col: int, row: int, value) -> str:
@@ -110,3 +121,73 @@ def build_xlsx(
         zf.writestr("xl/_rels/workbook.xml.rels", _WORKBOOK_RELS)
         zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
     return buffer.getvalue()
+
+
+
+def read_xlsx(data: bytes) -> list[list[str]]:
+    """Read the first worksheet of an .xlsx file into a list of string rows.
+
+    Handles shared strings, inline strings, and plain numeric/text values.
+    Missing cells are preserved as empty strings using each cell's column
+    reference, so columns stay aligned. Never raises on a malformed file - it
+    returns whatever rows it could parse (or an empty list).
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, OSError):
+        return []
+
+    with zf:
+        names = zf.namelist()
+
+        shared: list[str] = []
+        if "xl/sharedStrings.xml" in names:
+            try:
+                root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+                for si in root.findall(f"{_NS}si"):
+                    shared.append("".join(t.text or "" for t in si.iter(f"{_NS}t")))
+            except ET.ParseError:
+                shared = []
+
+        sheet = next(
+            (n for n in names
+             if n.startswith("xl/worksheets/") and n.endswith(".xml")),
+            None,
+        )
+        if sheet is None:
+            return []
+        try:
+            root = ET.fromstring(zf.read(sheet))
+        except ET.ParseError:
+            return []
+
+        rows: list[list[str]] = []
+        for row_el in root.iter(f"{_NS}row"):
+            cells: list[str] = []
+            for c in row_el.findall(f"{_NS}c"):
+                ref = c.get("r") or ""
+                letters = "".join(ch for ch in ref if ch.isalpha())
+                target = _col_to_index(letters) if letters else len(cells)
+                while len(cells) <= target:
+                    cells.append("")
+                cells[target] = _read_cell(c, shared)
+            rows.append(cells)
+        return rows
+
+
+def _read_cell(c, shared: list[str]) -> str:
+    cell_type = c.get("t")
+    v = c.find(f"{_NS}v")
+    if cell_type == "s" and v is not None and v.text is not None:
+        try:
+            idx = int(v.text)
+        except ValueError:
+            return ""
+        return shared[idx] if 0 <= idx < len(shared) else ""
+    if cell_type == "inlineStr":
+        is_el = c.find(f"{_NS}is")
+        if is_el is not None:
+            return "".join(t.text or "" for t in is_el.iter(f"{_NS}t"))
+    if v is not None and v.text is not None:
+        return v.text
+    return ""

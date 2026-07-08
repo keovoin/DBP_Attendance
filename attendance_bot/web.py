@@ -34,7 +34,7 @@ from .db import (
     Database,
 )
 from .reports import build_csv
-from .xlsx import build_xlsx
+from .xlsx import build_xlsx, read_xlsx
 
 logger = logging.getLogger("attendance_bot.web")
 
@@ -272,8 +272,53 @@ class _PortalHandler(BaseHTTPRequestHandler):
 
     def _read_form(self) -> dict:
         length = int(self.headers.get("Content-Length", 0) or 0)
-        body = self.rfile.read(length).decode("utf-8") if length else ""
-        return {k: v[0] for k, v in urllib.parse.parse_qs(body).items()}
+        body = self.rfile.read(length) if length else b""
+        ctype = self.headers.get("Content-Type", "")
+        if ctype.startswith("multipart/form-data"):
+            boundary = ""
+            for part in ctype.split(";"):
+                part = part.strip()
+                if part.startswith("boundary="):
+                    boundary = part[len("boundary="):].strip('"')
+            return self._parse_multipart(body, boundary) if boundary else {}
+        text = body.decode("utf-8", "replace")
+        return {k: v[0] for k, v in urllib.parse.parse_qs(text).items()}
+
+    def _parse_multipart(self, body: bytes, boundary: str) -> dict:
+        """Minimal multipart/form-data parser (stdlib-only).
+
+        Text fields become ``str`` values; a file field's value is the raw
+        ``bytes`` plus a companion ``"<name>_filename"`` entry.
+        """
+        result: dict = {}
+        for segment in body.split(b"--" + boundary.encode()):
+            if segment in (b"", b"--", b"--\r\n"):
+                continue
+            if segment.startswith(b"\r\n"):
+                segment = segment[2:]
+            if segment.endswith(b"\r\n"):
+                segment = segment[:-2]
+            if b"\r\n\r\n" not in segment:
+                continue
+            raw_headers, _, content = segment.partition(b"\r\n\r\n")
+            headers = raw_headers.decode("utf-8", "replace")
+            name = filename = None
+            for line in headers.split("\r\n"):
+                if line.lower().startswith("content-disposition"):
+                    for token in line.split(";"):
+                        token = token.strip()
+                        if token.startswith("name="):
+                            name = token[len("name="):].strip('"')
+                        elif token.startswith("filename="):
+                            filename = token[len("filename="):].strip('"')
+            if name is None:
+                continue
+            if filename is not None:
+                result[name] = content
+                result[f"{name}_filename"] = filename
+            else:
+                result[name] = content.decode("utf-8", "replace")
+        return result
 
     # -- routing --------------------------------------------------------
     def do_HEAD(self) -> None:  # noqa: N802
@@ -315,6 +360,8 @@ class _PortalHandler(BaseHTTPRequestHandler):
             self._export_csv(params)
         elif path == "/report.xlsx":
             self._export_xlsx(params)
+        elif path == "/members/template.xlsx":
+            self._member_template()
         elif path in routes:
             self._send(200, routes[path]())
         else:
@@ -616,12 +663,15 @@ class _PortalHandler(BaseHTTPRequestHandler):
         </div>
         <div class="panel">
           <h2>Bulk add members</h2>
-          <p class="muted">Paste one member per line, comma-separated:
-          <code>telegram_id, name, unit, coordinator, role</code>.
+          <p class="muted">Columns: <code>telegram_id, name, unit, coordinator, role</code>.
           Only ID and name are required; role is <code>regular</code> or
           <code>admin</code> (default regular). A header row is ignored.</p>
-          <form method="post" action="/members/bulk">
-            <textarea name="bulk" rows="6" style="width:100%"
+          <form method="post" action="/members/bulk" enctype="multipart/form-data">
+            <p class="muted" style="margin:0 0 4px">Upload an Excel (.xlsx) or CSV file
+            &mdash; <a href="/members/template.xlsx">download a template</a>:</p>
+            <input type="file" name="file" accept=".xlsx,.csv">
+            <p class="muted" style="margin:14px 0 4px">...and / or paste rows here:</p>
+            <textarea name="bulk" rows="5" style="width:100%"
               placeholder="123456789, Sok Dara, Engineering, Sophea, regular
 987654321, Chan Nary, Operations, Vuthy, admin"></textarea>
             <div style="margin-top:12px"><button type="submit">Import members</button></div>
@@ -930,33 +980,64 @@ class _PortalHandler(BaseHTTPRequestHandler):
         self._flash_redirect("/members", ok=f"Added member: {name}.")
 
     def _bulk_add_members(self, form) -> None:
-        """Bulk-create members from pasted lines.
+        """Bulk-create members from pasted text and/or an uploaded Excel/CSV file.
 
-        Each line: ``telegram_id, name, unit, coordinator, role`` (only the ID
-        and name are required). Commas or tabs separate fields. A header row and
-        blank lines are ignored. Existing IDs are skipped.
+        Row format: ``telegram_id, name, unit, coordinator, role`` (only the ID
+        and name are required). A header row, blank lines and existing IDs are
+        ignored.
         """
-        raw = form.get("bulk", "")
+        rows: list[list[str]] = []
+
+        # 1) Pasted text (comma or tab separated).
+        text = form.get("bulk", "")
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", "replace")
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                rows.append([p.strip() for p in line.replace("\t", ",").split(",")])
+
+        # 2) Uploaded file (.xlsx or .csv/text).
+        file_bytes = form.get("file")
+        filename = (form.get("file_filename") or "").lower()
+        if isinstance(file_bytes, bytes) and file_bytes:
+            if filename.endswith(".xlsx"):
+                rows.extend([[str(c).strip() for c in r] for r in read_xlsx(file_bytes)])
+            else:
+                content = file_bytes.decode("utf-8", "replace")
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line:
+                        rows.append([p.strip() for p in line.replace("\t", ",").split(",")])
+
+        added, skipped, errors = self._process_member_rows(rows)
+        self._audit("member.bulk", f"added={added} skipped={skipped} errors={errors}")
+        self._flash_redirect(
+            "/members",
+            ok=f"Bulk import complete: {added} added, {skipped} already existed, "
+            f"{errors} invalid row(s).",
+        )
+
+    def _process_member_rows(self, rows) -> tuple[int, int, int]:
         now = timeutil.now_iso(self.config.tz_offset_hours)
         added = skipped = errors = 0
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            parts = [p.strip() for p in line.replace("\t", ",").split(",")]
-            tid = parts[0] if parts else ""
+        for parts in rows:
+            tid = parts[0].strip() if parts else ""
             if not tid.lstrip("-").isdigit():
-                # Silently ignore an obvious header row; otherwise count as error.
+                # Ignore an obvious header row; otherwise count as an error.
                 if tid.lower() not in ("telegram_id", "id", "telegram id", "telegramid"):
-                    errors += 1
+                    if tid or any(p for p in parts[1:]):
+                        errors += 1
                 continue
-            name = parts[1] if len(parts) > 1 else ""
+            name = parts[1].strip() if len(parts) > 1 else ""
             if not name:
                 errors += 1
                 continue
-            unit = parts[2] if len(parts) > 2 and parts[2] else None
-            coordinator = parts[3] if len(parts) > 3 and parts[3] else None
-            role = parts[4].lower() if len(parts) > 4 and parts[4] else ROLE_REGULAR
+            unit = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+            coordinator = (
+                parts[3].strip() if len(parts) > 3 and parts[3].strip() else None
+            )
+            role = parts[4].strip().lower() if len(parts) > 4 and parts[4].strip() else ROLE_REGULAR
             if role not in (ROLE_ADMIN, ROLE_REGULAR):
                 role = ROLE_REGULAR
             tid_int = int(tid)
@@ -965,12 +1046,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
                 continue
             self.db.create_member(tid_int, name, role, coordinator, now, unit, None)
             added += 1
-        self._audit("member.bulk", f"added={added} skipped={skipped} errors={errors}")
-        self._flash_redirect(
-            "/members",
-            ok=f"Bulk import complete: {added} added, {skipped} already existed, "
-            f"{errors} invalid line(s).",
-        )
+        return added, skipped, errors
 
     def _update_member(self, form) -> None:
         tid = form.get("telegram_id", "").strip()
@@ -1158,6 +1234,19 @@ class _PortalHandler(BaseHTTPRequestHandler):
         self._send(
             200, build_csv(entries), "text/csv; charset=utf-8",
             [("Content-Disposition", f'attachment; filename="attendance_{stamp}.csv"')],
+        )
+
+    def _member_template(self) -> None:
+        header = ["telegram_id", "name", "unit", "coordinator", "role"]
+        example = [
+            [123456789, "Sok Dara", "Engineering", "Sophea", "regular"],
+            [987654321, "Chan Nary", "Operations", "Vuthy", "admin"],
+        ]
+        data = build_xlsx(header, example, sheet_name="Members")
+        self._send(
+            200, data,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            [("Content-Disposition", 'attachment; filename="members_template.xlsx"')],
         )
 
     def _export_xlsx(self, params) -> None:
