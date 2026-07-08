@@ -8,6 +8,7 @@ import time
 from .config import Config
 from .db import Database
 from .handlers import AttendanceBot
+from .health import start_health_server
 from .telegram_api import TelegramClient, TelegramError
 
 logger = logging.getLogger("attendance_bot")
@@ -23,6 +24,13 @@ def run() -> None:
     db = Database(config.db_path)
     client = TelegramClient(config.bot_token, timeout=config.poll_timeout_seconds)
     bot = AttendanceBot(client, db, config)
+
+    # Start the health-check server early so the hosting platform's proxy can
+    # connect to the machine while we establish the Telegram connection.
+    try:
+        start_health_server(config.health_port)
+    except OSError as exc:
+        logger.warning("Could not start health-check server: %s", exc)
 
     try:
         me = client.get_me()

@@ -58,6 +58,10 @@ class Config:
     tz_offset_hours: float = 7.0  # Cambodia / Indochina Time (ICT, UTC+7)
     geofence_radius_meters: float = 20.0
     poll_timeout_seconds: int = 30
+    # Port for the health-check HTTP server. Must match `internal_port` in
+    # fly.toml (or the equivalent on other hosts). Read from PORT so most
+    # platforms "just work".
+    health_port: int = 8080
 
     @classmethod
     def from_env(cls, *, require_token: bool = True) -> "Config":
@@ -91,4 +95,5 @@ class Config:
             tz_offset_hours=_float("TZ_OFFSET_HOURS", 7.0),
             geofence_radius_meters=_float("GEOFENCE_RADIUS_METERS", 20.0),
             poll_timeout_seconds=_int("POLL_TIMEOUT_SECONDS", 30),
+            health_port=_int("PORT", 8080),
         )

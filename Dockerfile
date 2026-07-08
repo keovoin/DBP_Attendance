@@ -16,7 +16,11 @@ COPY main.py ./
 
 # The SQLite database lives on a mounted volume at /data (see fly.toml).
 # DB_PATH is provided via environment; this is a safe default.
-ENV DB_PATH=/data/attendance.db
+ENV DB_PATH=/data/attendance.db \
+    PORT=8080
 
-# Long-polling worker: no ports are exposed because there is no HTTP server.
+# The bot polls Telegram (outbound) and also runs a small health-check HTTP
+# server on PORT so hosting proxies (e.g. Fly.io) can verify the machine.
+EXPOSE 8080
+
 CMD ["python", "-m", "attendance_bot"]

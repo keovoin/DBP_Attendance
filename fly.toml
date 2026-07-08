@@ -1,7 +1,13 @@
-# fly.toml app configuration file generated for dbp-attendance on 2026-07-08T04:28:03Z
+# Fly.io configuration for the Telegram Attendance Tracker.
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+# The bot uses long polling (only outbound calls to Telegram). Fly's proxy
+# still expects the machine to accept connections on an internal port, so the
+# app runs a tiny health-check HTTP server on 8080 (attendance_bot/health.py).
 #
+# IMPORTANT: because the bot receives NO inbound HTTP traffic, the machine must
+# never be auto-stopped, or Fly will shut it down and the proxy will report
+# "failed to connect to machine" (error PM05). Hence auto_stop_machines = false
+# and min_machines_running = 1 below.
 
 app = 'dbp-attendance'
 primary_region = 'sin'
@@ -9,28 +15,41 @@ primary_region = 'sin'
 [build]
   dockerfile = 'Dockerfile'
 
+# Non-secret configuration. Secrets (BOT_TOKEN, ADMIN_TELEGRAM_IDS) are set
+# separately with `fly secrets set` and are never committed to git.
 [env]
   DB_PATH = '/data/attendance.db'
+  TZ_OFFSET_HOURS = '7'          # Cambodia / Indochina Time (ICT, UTC+7)
   GEOFENCE_RADIUS_METERS = '20'
   POLL_TIMEOUT_SECONDS = '30'
-  TZ_OFFSET_HOURS = '7'
-  DB_PATH = "/data/attendance.db"
-  TZ_OFFSET_HOURS = "7"   # Cambodia / Indochina Time (ICT, UTC+7)
-  GEOFENCE_RADIUS_METERS = "20"
-  POLL_TIMEOUT_SECONDS = "30"
+  PORT = '8080'                  # health-check server port (matches internal_port)
 
+# Persistent volume for the SQLite database, mounted at /data so attendance
+# history survives deploys and restarts. Create it once with:
+#   fly volumes create attendance_data --region sin --size 1
 [[mounts]]
   source = 'attendance_data'
   destination = '/data'
 
+# Health-check server. Gives Fly's proxy a port to reach and keeps the machine
+# always-on (never auto-stopped) so polling never pauses.
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
-  auto_start_machines = true
-  min_machines_running = 0
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
   processes = ['app']
 
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '15s'
+    method = 'get'
+    path = '/health'
+
+# Keep exactly one instance running: a Telegram bot must be a single poller, or
+# two machines calling getUpdates would cause duplicated/dropped messages.
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '256mb'

@@ -82,6 +82,37 @@ fly ssh console -C "cat /data/attendance.db" > attendance-backup.db
 Or export from within Telegram at any time using the bot's `/export` command,
 which sends a CSV report.
 
+## Troubleshooting
+
+### `failed to connect to machine` / error `PM05`
+
+This means Fly's proxy could not reach your machine. The two usual causes:
+
+1. **Secrets not set (most common).** If `BOT_TOKEN` is missing the bot exits
+   on startup and the machine crash-loops, so nothing ever listens.
+   - Check: `fly secrets list` (you should see `BOT_TOKEN` and
+     `ADMIN_TELEGRAM_IDS`).
+   - Check: `fly logs` - a clear `BOT_TOKEN is not set` message confirms it.
+   - Fix: `fly secrets set BOT_TOKEN="..." ADMIN_TELEGRAM_IDS="..."` then
+     `fly deploy`.
+2. **Port mismatch.** The app runs a health-check server on port `8080`; this
+   must equal `internal_port` in `[http_service]` (and the `PORT` env). Both
+   are `8080` in the committed config - only change them together.
+
+After fixing, redeploy and confirm:
+
+```bash
+fly deploy
+fly status          # machine should be "started" and checks "passing"
+fly logs            # look for "Health-check server listening on 0.0.0.0:8080"
+                    # and "Polling for updates."
+```
+
+### Machine keeps restarting
+
+Run `fly logs` and read the traceback. A bad `BOT_TOKEN` shows as a Telegram
+`401`/`Could not reach Telegram` message; fix the secret and redeploy.
+
 ## Important notes
 
 - **Run only ONE instance.** A Telegram bot must have a single poller; two
