@@ -91,5 +91,5 @@ which sends a CSV report.
   Fly's smallest paid footprint (a few dollars a month); check current Fly
   pricing for exact figures.
 - **Timezone.** `TZ_OFFSET_HOURS` in `fly.toml` controls timestamps and the
-  "current date" logic. It's set to `7` (ICT) by default - change it to your
-  local UTC offset and redeploy.
+  "current date" logic. It's set to `7` = Cambodia / Indochina Time (ICT,
+  UTC+7). Change it only if you need a different local UTC offset, then redeploy.

@@ -37,7 +37,7 @@ Edit `.env` and set at least:
 | `BOT_TOKEN` | **Required.** Token from @BotFather. |
 | `DB_PATH` | SQLite file path (default `data/attendance.db`). |
 | `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs auto-granted Admin on registration. Use this to create the first Admin. Find your ID via [@userinfobot](https://t.me/userinfobot). |
-| `TZ_OFFSET_HOURS` | UTC offset for timestamps and "today" logic (e.g. `7`, `-5`, `0`). |
+| `TZ_OFFSET_HOURS` | UTC offset for timestamps and "today" logic. Default `7` = Cambodia / Indochina Time (ICT). Other examples: `0` UTC, `-5` US Eastern. |
 | `GEOFENCE_RADIUS_METERS` | On-site radius. The spec fixes this at `20`. |
 | `POLL_TIMEOUT_SECONDS` | Long-polling timeout for `getUpdates`. |
 
