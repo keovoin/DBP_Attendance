@@ -150,6 +150,22 @@ fly logs            # look for "Health-check server listening on 0.0.0.0:8080"
                     # and "Polling for updates."
 ```
 
+### Machine shows `suspended` (or `stopped`) and the bot doesn't respond
+
+Fly's proxy auto-stops/suspends Machines it thinks are idle. A polling bot only
+makes outbound calls, so it looks idle and gets suspended - even though it is
+working. This repo's `fly.toml` fixes that by NOT defining an `[http_service]`,
+so the Machine is a plain worker that runs 24/7.
+
+If you still see a suspended/stopped Machine after deploying:
+
+1. Deploy the current config (green Actions run, or `fly deploy`).
+2. In the Fly dashboard, open **Machines**. If there is more than one Machine,
+   destroy the extra/suspended ones - keep a single running Machine (two
+   pollers conflict on Telegram). CLI equivalent:
+   `fly machine list` then `fly machine destroy <id>`.
+3. Start the remaining Machine if needed: `fly machine start <id>`.
+
 ### Machine keeps restarting
 
 Run `fly logs` and read the traceback. A bad `BOT_TOKEN` shows as a Telegram

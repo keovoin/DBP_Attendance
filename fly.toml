@@ -1,13 +1,13 @@
 # Fly.io configuration for the Telegram Attendance Tracker.
 #
-# The bot uses long polling (only outbound calls to Telegram). Fly's proxy
-# still expects the machine to accept connections on an internal port, so the
-# app runs a tiny health-check HTTP server on 8080 (attendance_bot/health.py).
+# The bot is a LONG-POLLING WORKER: it only makes OUTBOUND calls to Telegram and
+# receives no inbound web traffic. Fly's proxy auto-stop/auto-suspend feature
+# only manages Machines that sit behind an [http_service]; to that feature a
+# background poller always looks "idle", so it SUSPENDS the machine even though
+# the bot is busy. We therefore deliberately do NOT define an [http_service]
+# here - with no service in front of it, the Machine simply runs 24/7.
 #
-# IMPORTANT: because the bot receives NO inbound HTTP traffic, the machine must
-# never be auto-stopped, or Fly will shut it down and the proxy will report
-# "failed to connect to machine" (error PM05). Hence auto_stop_machines = false
-# and min_machines_running = 1 below.
+# Ref: https://fly.io/docs/blueprints/long-running-tasks/
 
 app = 'dbp-attendance'
 primary_region = 'sin'
@@ -16,13 +16,12 @@ primary_region = 'sin'
   dockerfile = 'Dockerfile'
 
 # Non-secret configuration. Secrets (BOT_TOKEN, ADMIN_TELEGRAM_IDS) are set
-# separately with `fly secrets set` and are never committed to git.
+# by the GitHub Actions deploy workflow / `fly secrets set` and never committed.
 [env]
   DB_PATH = '/data/attendance.db'
   TZ_OFFSET_HOURS = '7'          # Cambodia / Indochina Time (ICT, UTC+7)
   GEOFENCE_RADIUS_METERS = '20'
   POLL_TIMEOUT_SECONDS = '30'
-  PORT = '8080'                  # health-check server port (matches internal_port)
 
 # Persistent volume for the SQLite database, mounted at /data so attendance
 # history survives deploys and restarts. Create it once with:
@@ -31,25 +30,8 @@ primary_region = 'sin'
   source = 'attendance_data'
   destination = '/data'
 
-# Health-check server. Gives Fly's proxy a port to reach and keeps the machine
-# always-on (never auto-stopped) so polling never pauses.
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = false
-  auto_start_machines = false
-  min_machines_running = 1
-  processes = ['app']
-
-  [[http_service.checks]]
-    interval = '30s'
-    timeout = '5s'
-    grace_period = '15s'
-    method = 'get'
-    path = '/health'
-
-# Keep exactly one instance running: a Telegram bot must be a single poller, or
-# two machines calling getUpdates would cause duplicated/dropped messages.
+# A single always-on Machine. A Telegram bot must be a single poller: two
+# machines calling getUpdates would fight over messages.
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '256mb'

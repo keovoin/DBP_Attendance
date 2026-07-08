@@ -38,8 +38,14 @@ def run() -> None:
             "Starting bot @%s (id=%s)", me.get("username"), me.get("id")
         )
     except TelegramError as exc:
-        logger.error("Could not reach Telegram (check BOT_TOKEN): %s", exc)
-        return
+        # Do NOT exit: a clean exit would let the platform mark the machine as
+        # stopped. Keep the process alive and let the polling loop retry so the
+        # error stays visible in the logs (usually a wrong/missing BOT_TOKEN).
+        logger.error(
+            "Could not reach Telegram at startup (check BOT_TOKEN): %s. "
+            "Retrying in the polling loop...",
+            exc,
+        )
 
     offset = None
     logger.info("Polling for updates. Press Ctrl+C to stop.")
