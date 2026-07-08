@@ -16,9 +16,15 @@ Admins get an optional **web dashboard** in the browser.
 - **SQLite data store** — a single file, created automatically.
 - **Geofenced on-site clock-in** using the haversine distance formula.
 - **Role-based access control** with an easy first-admin bootstrap.
-- **CSV export** delivered as a downloadable Telegram document.
-- **Admin web dashboard** — an optional browser portal with summary stats, a
-  recent-activity chart, a filterable attendance table, and CSV export.
+- **Guided registration** — new members set their real name, unit/department,
+  coordinator, and base location (for teams across multiple places/departments).
+- **Auto late-detection** — clock-ins after the work start time are flagged and
+  the member is prompted for a reason.
+- **Daily reminders** — morning "clock in" and evening "clock out" nudges on
+  working days.
+- **Multiple sites** — configure several on-site locations; members are
+  validated against their assigned base site.
+- **CSV + Excel export** and an **admin web dashboard** with analytics and a map.
 
 ## Getting started
 
@@ -66,10 +72,15 @@ The bot uses long polling, so no public URL or webhook is needed.
 
 | Command | Who | Description |
 | --- | --- | --- |
-| `/register` (or `/start`) | Everyone | Register and set your coordinator. |
-| `/setcoordinator <name>` | Member | Set or change your coordinator. |
+| `/register` (or `/start`) | Everyone | Guided setup: real name, coordinator, unit, base location. |
 | `/clockin` | Member | Clock in; choose **Remote** or **On_Site**. |
 | `/clockout` | Member | Close today's open clock-in. |
+| `/status` | Member | See if you're currently clocked in and for how long. |
+| `/summary [week\|month]` | Member | Your hours, days present, and late count. |
+| `/setname <name>` | Member | Update your real full name. |
+| `/setcoordinator <name>` | Member | Set or change your coordinator. |
+| `/setunit <unit>` | Member | Set your unit/department. |
+| `/setbase` | Member | Choose your base location (from configured sites). |
 | `/remark <YYYY-MM-DD> <text>` | Member | Add/replace a late remark for a date. |
 | `/view [member <name>] [from <date>] [to <date>]` | Member | View attendance (own for Regular Users; anyone/all for Admins). |
 | `/export [member <name>] [from <date>] [to <date>]` | Member | Download a CSV report. |
@@ -98,14 +109,25 @@ log in with that password, and you get:
   clocked in, on-site vs remote) and a 14-day activity chart.
 - **Attendance** — a filterable table (by member and date range) with one-click
   CSV export.
-- **Members** — everyone's role, coordinator, and registration date, plus a form
-  to **add a member** (by Telegram ID, name, role, coordinator).
-- **Settings** — **configure the on-site location** (latitude/longitude) used for
-  On_Site geofence validation.
+- **Attendance** — filter by member/date range; **edit or delete** entries;
+  export to **CSV or Excel (.xlsx)**.
+- **Members** — add, **edit, and delete** members, including unit/department,
+  base site, role, and coordinator.
+- **Analytics** — per-member hours worked, days present, late count, on-site vs
+  remote, and attendance rate over a chosen date range.
+- **Map** — plots configured sites and on-site clock-in points (Leaflet); click
+  the map to grab coordinates and add a new site.
+- **Settings** — the default on-site location, **multiple named sites**, the
+  **work schedule** (start/end times, working days, reminders on/off), and an
+  **audit log** of admin changes.
 
-The dashboard is protected by a signed `HttpOnly` session cookie,
-and shares the bot's database (SQLite in WAL mode for safe concurrent reads).
-If `ADMIN_PORTAL_PASSWORD` is empty, only a health endpoint is served.
+The dashboard is protected by a signed `HttpOnly` session cookie, and shares the
+bot's database (SQLite in WAL mode for safe concurrent reads). All admin write
+actions are recorded in the audit log. If `ADMIN_PORTAL_PASSWORD` is empty, only
+a health endpoint is served.
+
+> The **Map** page loads Leaflet and OpenStreetMap tiles from a CDN, so it needs
+> internet access in your browser (the rest of the dashboard works offline).
 
 ## Project layout
 
@@ -120,7 +142,9 @@ attendance_bot/
   handlers.py       # command + conversation state machine (the bot logic)
   reports.py        # CSV export and text rendering
   telegram_api.py   # minimal stdlib Telegram Bot API client
-  timeutil.py       # timezone-offset time helpers
+  timeutil.py       # timezone-offset time helpers, work-day math
+  scheduler.py      # daily clock-in / clock-out reminder thread
+  xlsx.py           # minimal stdlib .xlsx (Excel) writer
   web.py            # admin web dashboard (stdlib http.server)
   health.py         # minimal health endpoint (when dashboard is off)
 main.py             # convenience launcher

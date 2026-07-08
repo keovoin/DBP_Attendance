@@ -9,6 +9,7 @@ from .config import Config
 from .db import Database
 from .handlers import AttendanceBot
 from .health import start_health_server
+from .scheduler import ReminderScheduler
 from .telegram_api import TelegramClient, TelegramError
 from .web import start_web_portal
 
@@ -40,6 +41,12 @@ def run() -> None:
             start_health_server(config.health_port)
     except OSError as exc:
         logger.warning("Could not start HTTP server: %s", exc)
+
+    # Background daily reminders (morning clock-in / evening clock-out).
+    try:
+        ReminderScheduler(client, config).start()
+    except Exception as exc:  # pragma: no cover - non-fatal
+        logger.warning("Could not start reminder scheduler: %s", exc)
 
     try:
         me = client.get_me()

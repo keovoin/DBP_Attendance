@@ -1,9 +1,10 @@
 """Admin web portal / dashboard for the Telegram Attendance Tracker.
 
 A self-contained, dependency-free web app built on the standard library
-``http.server``. It reads the same SQLite database the bot writes to and shows
-an admin dashboard: summary stats, a recent-activity chart, a filterable
-attendance table, a members list, and CSV export.
+``http.server``. It reads and writes the same SQLite database the bot uses and
+provides: dashboard stats, a filterable attendance table (view/edit/delete),
+member management (add/edit/delete), multiple site management, work-schedule
+settings, a map view, an analytics page, CSV + Excel export, and an audit log.
 
 Access is protected by a single admin password (``ADMIN_PORTAL_PASSWORD``).
 Sessions are kept in a signed, HttpOnly cookie. The portal only starts if a
@@ -16,16 +17,24 @@ import hashlib
 import hmac
 import html
 import http.cookies
+import json
 import logging
 import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .config import Config
-from .db import ROLE_ADMIN, ROLE_REGULAR, TYPE_ON_SITE, TYPE_REMOTE, Database
-from .reports import build_csv
 from . import timeutil
+from .config import Config
+from .db import (
+    ROLE_ADMIN,
+    ROLE_REGULAR,
+    TYPE_ON_SITE,
+    TYPE_REMOTE,
+    Database,
+)
+from .reports import build_csv
+from .xlsx import build_xlsx
 
 logger = logging.getLogger("attendance_bot.web")
 
@@ -64,27 +73,32 @@ def verify_session_token(secret: str, token: str) -> bool:
 # HTML rendering
 # --------------------------------------------------------------------- #
 def _e(value: object) -> str:
-    """HTML-escape a value, rendering None as an em dash."""
     if value is None or value == "":
         return "&mdash;"
     return html.escape(str(value))
 
 
+def _attr(value: object) -> str:
+    """Escape a value for use inside an HTML attribute (no em dash)."""
+    return html.escape("" if value is None else str(value), quote=True)
+
+
 PAGE_CSS = """
 :root { --bg:#0f172a; --card:#1e293b; --muted:#94a3b8; --text:#e2e8f0;
-        --accent:#38bdf8; --accent2:#34d399; --border:#334155; }
+        --accent:#38bdf8; --accent2:#34d399; --border:#334155; --danger:#f87171; }
 * { box-sizing: border-box; }
 body { margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
        background:var(--bg); color:var(--text); }
 a { color:var(--accent); text-decoration:none; }
 header { display:flex; align-items:center; justify-content:space-between;
-         padding:16px 24px; background:var(--card); border-bottom:1px solid var(--border); }
+         padding:16px 24px; background:var(--card); border-bottom:1px solid var(--border);
+         flex-wrap:wrap; gap:8px; }
 header .brand { font-weight:700; font-size:18px; }
-header nav a { margin-left:18px; color:var(--muted); }
+header nav a { margin-left:16px; color:var(--muted); }
 header nav a:hover { color:var(--text); }
-main { max-width:1100px; margin:0 auto; padding:24px; }
+main { max-width:1150px; margin:0 auto; padding:24px; }
 h1 { font-size:22px; margin:0 0 4px; }
-h2 { font-size:16px; color:var(--muted); font-weight:600; margin:28px 0 12px; }
+h2 { font-size:16px; color:var(--muted); font-weight:600; margin:26px 0 12px; }
 .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; }
 .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
 .card .num { font-size:28px; font-weight:700; }
@@ -99,38 +113,44 @@ tr:last-child td { border-bottom:none; }
 .badge.remote { background:rgba(56,189,248,.15); color:var(--accent); }
 .badge.admin { background:rgba(250,204,21,.15); color:#facc15; }
 .badge.user { background:rgba(148,163,184,.15); color:var(--muted); }
+.badge.late { background:rgba(248,113,113,.15); color:var(--danger); }
 form.filters { display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin-bottom:16px; }
 label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
-input,select,button { font:inherit; padding:8px 10px; border-radius:8px;
+input,select,button,textarea { font:inherit; padding:8px 10px; border-radius:8px;
         border:1px solid var(--border); background:#0b1220; color:var(--text); }
 button, .btn { background:var(--accent); color:#04283a; border:none; font-weight:700; cursor:pointer; }
 .btn { display:inline-block; padding:9px 14px; }
+.btn.secondary { background:#334155; color:var(--text); }
+.btn.danger { background:var(--danger); color:#3a0404; }
 .chart { display:flex; align-items:flex-end; gap:6px; height:140px; padding:12px;
          background:var(--card); border:1px solid var(--border); border-radius:12px; }
 .bar { flex:1; background:linear-gradient(var(--accent),#0ea5e9); border-radius:4px 4px 0 0; min-height:2px; position:relative; }
-.bar span { position:absolute; bottom:-20px; left:0; right:0; text-align:center;
-            font-size:10px; color:var(--muted); }
+.bar span { position:absolute; bottom:-20px; left:0; right:0; text-align:center; font-size:10px; color:var(--muted); }
 .bar b { position:absolute; top:-18px; left:0; right:0; text-align:center; font-size:11px; }
 .muted { color:var(--muted); }
 .login-wrap { max-width:360px; margin:10vh auto; }
 .login-wrap .card { padding:24px; }
 .login-wrap input { width:100%; margin-bottom:12px; }
 .login-wrap button { width:100%; }
-.err { color:#f87171; font-size:14px; margin-bottom:10px; }
-.ok { background:rgba(52,211,153,.15); color:var(--accent2); padding:10px 12px;
-      border-radius:8px; margin-bottom:16px; font-size:14px; }
-.banner-err { background:rgba(248,113,113,.15); color:#f87171; padding:10px 12px;
-      border-radius:8px; margin-bottom:16px; font-size:14px; }
-.panel { background:var(--card); border:1px solid var(--border); border-radius:12px;
-      padding:18px; margin-bottom:22px; }
+.err { color:var(--danger); font-size:14px; margin-bottom:10px; }
+.ok { background:rgba(52,211,153,.15); color:var(--accent2); padding:10px 12px; border-radius:8px; margin-bottom:16px; font-size:14px; }
+.banner-err { background:rgba(248,113,113,.15); color:var(--danger); padding:10px 12px; border-radius:8px; margin-bottom:16px; font-size:14px; }
+.panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:22px; }
 .panel h2 { margin-top:0; }
 form.stack { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
 form.stack > div { flex:1; min-width:150px; }
-form.stack input, form.stack select { width:100%; }
+form.stack input, form.stack select, form.stack textarea { width:100%; }
+.actions a { margin-right:10px; font-size:13px; }
+.row2 { display:flex; gap:20px; flex-wrap:wrap; }
+.row2 > .panel { flex:1; min-width:300px; }
+.checks label { display:inline-flex; align-items:center; gap:6px; margin-right:14px;
+        color:var(--text); font-size:14px; }
+.checks input { width:auto; }
+#map { height:460px; border-radius:12px; border:1px solid var(--border); }
 """
 
 
-def layout(title: str, body: str, active: str = "") -> bytes:
+def layout(title: str, body: str, active: str = "", head_extra: str = "") -> bytes:
     def nav(label: str, href: str, key: str) -> str:
         style = ' style="color:var(--text)"' if key == active else ""
         return f'<a href="{href}"{style}>{label}</a>'
@@ -139,7 +159,7 @@ def layout(title: str, body: str, active: str = "") -> bytes:
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_e(title)} - Attendance Admin</title>
-<style>{PAGE_CSS}</style></head>
+<style>{PAGE_CSS}</style>{head_extra}</head>
 <body>
 <header>
   <div class="brand">📋 Attendance Admin</div>
@@ -147,6 +167,8 @@ def layout(title: str, body: str, active: str = "") -> bytes:
     {nav("Dashboard", "/", "dash")}
     {nav("Attendance", "/attendance", "att")}
     {nav("Members", "/members", "mem")}
+    {nav("Analytics", "/analytics", "analytics")}
+    {nav("Map", "/map", "map")}
     {nav("Settings", "/settings", "set")}
     <a href="/logout">Log out</a>
   </nav>
@@ -180,7 +202,6 @@ def login_page(error: str = "") -> bytes:
 class _PortalHandler(BaseHTTPRequestHandler):
     server_version = "AttendancePortal/1.0"
 
-    # -- shared context -------------------------------------------------
     @property
     def config(self) -> Config:
         return self.server.ctx_config  # type: ignore[attr-defined]
@@ -190,10 +211,10 @@ class _PortalHandler(BaseHTTPRequestHandler):
         return self.server.ctx_db  # type: ignore[attr-defined]
 
     def log_message(self, *args, **kwargs) -> None:
-        return  # keep logs quiet
+        return
 
-    # -- low-level responses -------------------------------------------
-    def _send(self, status: int, body: bytes, content_type="text/html; charset=utf-8",
+    # -- low-level ------------------------------------------------------
+    def _send(self, status, body, content_type="text/html; charset=utf-8",
               extra_headers=None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -204,12 +225,31 @@ class _PortalHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _redirect(self, location: str, extra_headers=None) -> None:
+    def _redirect(self, location, extra_headers=None) -> None:
         self.send_response(303)
         self.send_header("Location", location)
         for k, v in (extra_headers or []):
             self.send_header(k, v)
         self.end_headers()
+
+    def _flash_redirect(self, path, *, ok="", err="") -> None:
+        key, msg = ("ok", ok) if ok else ("err", err)
+        self._redirect(f"{path}?{key}={urllib.parse.quote(msg)}")
+
+    @staticmethod
+    def _flash(params) -> str:
+        ok = params.get("ok", [""])[0]
+        err = params.get("err", [""])[0]
+        if ok:
+            return f'<div class="ok">{_e(ok)}</div>'
+        if err:
+            return f'<div class="banner-err">{_e(err)}</div>'
+        return ""
+
+    def _audit(self, action: str, detail: str = "") -> None:
+        self.db.add_audit(
+            timeutil.now_iso(self.config.tz_offset_hours), "web-admin", action, detail
+        )
 
     # -- auth -----------------------------------------------------------
     def _is_authed(self) -> bool:
@@ -221,16 +261,19 @@ class _PortalHandler(BaseHTTPRequestHandler):
             jar.load(raw)
         except http.cookies.CookieError:
             return False
-        morsel = jar.get(COOKIE_NAME)
-        if morsel is None:
-            return False
-        return verify_session_token(self.config.portal_secret, morsel.value)
+        m = jar.get(COOKIE_NAME)
+        return m is not None and verify_session_token(self.config.portal_secret, m.value)
 
     def _require_auth(self) -> bool:
         if self._is_authed():
             return True
         self._redirect("/login")
         return False
+
+    def _read_form(self) -> dict:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(length).decode("utf-8") if length else ""
+        return {k: v[0] for k, v in urllib.parse.parse_qs(body).items()}
 
     # -- routing --------------------------------------------------------
     def do_HEAD(self) -> None:  # noqa: N802
@@ -248,26 +291,32 @@ class _PortalHandler(BaseHTTPRequestHandler):
             self._send(200, login_page())
             return
         if path == "/logout":
-            expired = http.cookies.SimpleCookie()
-            expired[COOKIE_NAME] = ""
-            expired[COOKIE_NAME]["path"] = "/"
-            expired[COOKIE_NAME]["max-age"] = 0
-            self._redirect("/login", [("Set-Cookie", expired[COOKIE_NAME].OutputString())])
+            exp = http.cookies.SimpleCookie()
+            exp[COOKIE_NAME] = ""
+            exp[COOKIE_NAME]["path"] = "/"
+            exp[COOKIE_NAME]["max-age"] = 0
+            self._redirect("/login", [("Set-Cookie", exp[COOKIE_NAME].OutputString())])
             return
 
         if not self._require_auth():
             return
 
-        if path == "/":
-            self._send(200, self._dashboard())
-        elif path == "/attendance":
-            self._send(200, self._attendance_page(params))
-        elif path == "/members":
-            self._send(200, self._members_page(params))
-        elif path == "/settings":
-            self._send(200, self._settings_page(params))
-        elif path == "/export.csv":
-            self._export(params)
+        routes = {
+            "/": self._dashboard,
+            "/attendance": lambda: self._attendance_page(params),
+            "/members": lambda: self._members_page(params),
+            "/member": lambda: self._member_edit_page(params),
+            "/entry": lambda: self._entry_edit_page(params),
+            "/analytics": lambda: self._analytics_page(params),
+            "/map": lambda: self._map_page(params),
+            "/settings": lambda: self._settings_page(params),
+        }
+        if path == "/export.csv":
+            self._export_csv(params)
+        elif path == "/report.xlsx":
+            self._export_xlsx(params)
+        elif path in routes:
+            self._send(200, routes[path]())
         else:
             self._send(404, layout("Not found", "<h1>404</h1><p>Page not found.</p>"))
 
@@ -279,31 +328,33 @@ class _PortalHandler(BaseHTTPRequestHandler):
         if path == "/login":
             self._handle_login(form)
             return
-
-        # Every other POST is a state change and requires authentication.
         if not self._is_authed():
             self._redirect("/login")
             return
 
-        if path == "/members/add":
-            self._add_member(form)
-        elif path == "/settings/location":
-            self._set_location(form)
-        else:
+        actions = {
+            "/members/add": self._add_member,
+            "/members/update": self._update_member,
+            "/members/delete": self._delete_member,
+            "/entry/update": self._update_entry,
+            "/entry/delete": self._delete_entry,
+            "/sites/add": self._add_site,
+            "/sites/delete": self._delete_site,
+            "/settings/location": self._set_location,
+            "/settings/schedule": self._set_schedule,
+        }
+        action = actions.get(path)
+        if action is None:
             self._send(404, b"not found", "text/plain; charset=utf-8")
+        else:
+            action(form)
 
-    def _read_form(self) -> dict:
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        body = self.rfile.read(length).decode("utf-8") if length else ""
-        return {k: v[0] for k, v in urllib.parse.parse_qs(body).items()}
-
-    def _handle_login(self, form: dict) -> None:
+    def _handle_login(self, form) -> None:
         password = form.get("password", "")
         expected = self.config.admin_portal_password
         if expected and hmac.compare_digest(password, expected):
-            token = make_session_token(self.config.portal_secret)
             cookie = http.cookies.SimpleCookie()
-            cookie[COOKIE_NAME] = token
+            cookie[COOKIE_NAME] = make_session_token(self.config.portal_secret)
             m = cookie[COOKIE_NAME]
             m["path"] = "/"
             m["httponly"] = True
@@ -314,125 +365,72 @@ class _PortalHandler(BaseHTTPRequestHandler):
         else:
             self._send(200, login_page("Incorrect password."))
 
-    # -- write actions --------------------------------------------------
-    def _add_member(self, form: dict) -> None:
-        tid = form.get("telegram_id", "").strip()
-        name = form.get("name", "").strip()
-        role = form.get("role", ROLE_REGULAR).strip()
-        coordinator = form.get("coordinator", "").strip() or None
+    # ================================================================== #
+    # Shared render helpers
+    # ================================================================== #
+    def _site_options(self, selected_id, include_none=True) -> str:
+        opts = []
+        if include_none:
+            sel = " selected" if not selected_id else ""
+            opts.append(f'<option value="0"{sel}>(none)</option>')
+        for s in self.db.list_sites():
+            sel = " selected" if selected_id and int(selected_id) == s.id else ""
+            opts.append(f'<option value="{s.id}"{sel}>{_e(s.name)}</option>')
+        return "".join(opts)
 
-        if not tid.lstrip("-").isdigit() or not name:
-            self._flash_redirect(
-                "/members", err="Provide a numeric Telegram ID and a name."
-            )
-            return
-        if role not in (ROLE_ADMIN, ROLE_REGULAR):
-            role = ROLE_REGULAR
-        tid_int = int(tid)
-        if self.db.get_member(tid_int) is not None:
-            self._flash_redirect(
-                "/members", err="A member with that Telegram ID already exists."
-            )
-            return
-        self.db.create_member(
-            telegram_id=tid_int,
-            name=name,
-            role=role,
-            coordinator=coordinator,
-            created_at=timeutil.now_iso(self.config.tz_offset_hours),
-        )
-        self._flash_redirect("/members", ok=f"Added member: {name}.")
+    def _site_name(self, site_id) -> str:
+        if not site_id:
+            return "&mdash;"
+        s = self.db.get_site(int(site_id))
+        return _e(s.name) if s else "&mdash;"
 
-    def _set_location(self, form: dict) -> None:
-        try:
-            lat = float(form.get("latitude", "").strip())
-            lon = float(form.get("longitude", "").strip())
-        except ValueError:
-            self._flash_redirect(
-                "/settings", err="Latitude and longitude must be numbers."
-            )
-            return
-        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-            self._flash_redirect(
-                "/settings",
-                err="Latitude must be -90..90 and longitude -180..180.",
-            )
-            return
-        self.db.set_configured_location(lat, lon)
-        self._flash_redirect("/settings", ok=f"On-site location set to {lat}, {lon}.")
+    def _type_badge(self, t) -> str:
+        if t == TYPE_ON_SITE:
+            return '<span class="badge onsite">On_Site</span>'
+        if t == TYPE_REMOTE:
+            return '<span class="badge remote">Remote</span>'
+        return _e(None)
 
-    def _flash_redirect(self, path: str, *, ok: str = "", err: str = "") -> None:
-        key, msg = ("ok", ok) if ok else ("err", err)
-        self._redirect(f"{path}?{key}={urllib.parse.quote(msg)}")
-
-    @staticmethod
-    def _flash(params) -> str:
-        ok = params.get("ok", [""])[0]
-        err = params.get("err", [""])[0]
-        if ok:
-            return f'<div class="ok">{_e(ok)}</div>'
-        if err:
-            return f'<div class="banner-err">{_e(err)}</div>'
-        return ""
-
-    # -- pages ----------------------------------------------------------
+    # ================================================================== #
+    # Dashboard
+    # ================================================================== #
     def _dashboard(self) -> bytes:
         tz = self.config.tz_offset_hours
         today = timeutil.today_iso(tz)
         entries = self.db.query_attendance()
         members = self.db.list_members()
 
-        total_members = len(members)
-        total_admins = sum(1 for m in members if m.role == ROLE_ADMIN)
-        total_entries = len(entries)
         today_entries = [e for e in entries if e.date == today]
-        onsite = sum(1 for e in entries if e.clock_in_type == TYPE_ON_SITE)
-        remote = sum(1 for e in entries if e.clock_in_type == TYPE_REMOTE)
-        clocked_in_now = sum(
-            1 for e in today_entries if e.clock_in_time and not e.clock_out_time
-        )
-
         cards = [
-            (total_members, "Members"),
-            (total_admins, "Admins"),
-            (total_entries, "Total entries"),
+            (len(members), "Members"),
+            (sum(1 for m in members if m.role == ROLE_ADMIN), "Admins"),
+            (len(entries), "Total entries"),
             (len(today_entries), "Clock-ins today"),
-            (clocked_in_now, "Currently clocked in"),
-            (onsite, "On-site (all time)"),
-            (remote, "Remote (all time)"),
+            (sum(1 for e in today_entries if e.clock_in_time and not e.clock_out_time),
+             "Currently in"),
+            (sum(1 for e in entries if e.is_late), "Late (all time)"),
         ]
         cards_html = "".join(
-            f'<div class="card"><div class="num">{num}</div>'
-            f'<div class="lbl">{_e(label)}</div></div>'
-            for num, label in cards
+            f'<div class="card"><div class="num">{n}</div>'
+            f'<div class="lbl">{_e(lbl)}</div></div>' for n, lbl in cards
         )
-
-        chart_html = self._recent_chart(entries, tz)
-
         recent = sorted(entries, key=lambda e: (e.date, e.id), reverse=True)[:10]
-        rows = "".join(self._entry_row(e, include_member=True) for e in recent)
-        if not rows:
-            rows = '<tr><td colspan="6" class="muted">No attendance yet.</td></tr>'
-
+        rows = "".join(self._entry_row(e) for e in recent) or \
+            '<tr><td colspan="7" class="muted">No attendance yet.</td></tr>'
         body = f"""
         <h1>Dashboard</h1>
-        <p class="muted">Overview as of {_e(today)} (UTC{tz:+g}).</p>
+        <p class="muted">As of {_e(today)} (UTC{tz:+g}).</p>
         <div class="cards">{cards_html}</div>
         <h2>Clock-ins over the last 14 days</h2>
-        {chart_html}
+        {self._recent_chart(entries, tz)}
         <h2>Recent activity</h2>
-        <table>
-          <tr><th>Date</th><th>Member</th><th>In</th><th>Out</th>
-              <th>Type</th><th>Coordinator</th></tr>
-          {rows}
-        </table>
+        <table><tr><th>Date</th><th>Member</th><th>In</th><th>Out</th>
+        <th>Type</th><th>Coordinator</th><th>Late</th></tr>{rows}</table>
         """
         return layout("Dashboard", body, active="dash")
 
     def _recent_chart(self, entries, tz) -> str:
-        # Count entries per day for the last 14 days.
         from datetime import timedelta
-
         now = timeutil.now(tz)
         days = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(13, -1, -1)]
         counts = {d: 0 for d in days}
@@ -443,21 +441,29 @@ class _PortalHandler(BaseHTTPRequestHandler):
         bars = ""
         for d in days:
             c = counts[d]
-            pct = int((c / peak) * 100)
-            label = d[5:]  # MM-DD
+            pct = max(int((c / peak) * 100), 2)
             top = f"<b>{c}</b>" if c else ""
-            bars += (
-                f'<div class="bar" style="height:{max(pct,2)}%">'
-                f"{top}<span>{label}</span></div>"
-            )
+            bars += f'<div class="bar" style="height:{pct}%">{top}<span>{d[5:]}</span></div>'
         return f'<div class="chart">{bars}</div>'
 
-    def _attendance_page(self, params) -> bytes:
-        members = self.db.list_members()
+    def _entry_row(self, e, editable=False) -> str:
+        late = '<span class="badge late">Late</span>' if e.is_late else "&mdash;"
+        edit = (f'<td class="actions"><a href="/entry?id={e.id}">Edit</a></td>'
+                if editable else "")
+        return (
+            f"<tr><td>{_e(e.date)}</td><td>{_e(e.member_name)}</td>"
+            f"<td>{_e(e.clock_in_time)}</td><td>{_e(e.clock_out_time)}</td>"
+            f"<td>{self._type_badge(e.clock_in_type)}</td>"
+            f"<td>{_e(e.coordinator)}</td><td>{late}</td>{edit}</tr>"
+        )
+
+    # ================================================================== #
+    # Attendance (with edit links)
+    # ================================================================== #
+    def _parse_filter(self, params):
         member_param = params.get("member", ["all"])[0]
         start = params.get("from", [""])[0].strip()
         end = params.get("to", [""])[0].strip()
-
         telegram_id = None
         if member_param not in ("", "all"):
             try:
@@ -466,170 +472,557 @@ class _PortalHandler(BaseHTTPRequestHandler):
                 telegram_id = None
         start_v = start if timeutil.is_valid_date(start) else None
         end_v = end if timeutil.is_valid_date(end) else None
+        return member_param, start, end, telegram_id, start_v, end_v
 
-        entries = self.db.query_attendance(
-            telegram_id=telegram_id, start_date=start_v, end_date=end_v
-        )
-
+    def _attendance_page(self, params) -> bytes:
+        member_param, start, end, tid, start_v, end_v = self._parse_filter(params)
+        entries = self.db.query_attendance(tid, start_v, end_v)
         options = ['<option value="all">All members</option>']
-        for m in members:
+        for m in self.db.list_members():
             sel = " selected" if str(m.telegram_id) == member_param else ""
-            options.append(
-                f'<option value="{m.telegram_id}"{sel}>{_e(m.name)}</option>'
-            )
-
-        rows = "".join(self._entry_row(e, include_member=True) for e in entries)
-        if not rows:
-            rows = '<tr><td colspan="6" class="muted">No records for this filter.</td></tr>'
-
-        qs = urllib.parse.urlencode(
-            {"member": member_param, "from": start, "to": end}
-        )
+            options.append(f'<option value="{m.telegram_id}"{sel}>{_e(m.name)}</option>')
+        rows = "".join(self._entry_row(e, editable=True) for e in entries) or \
+            '<tr><td colspan="8" class="muted">No records.</td></tr>'
+        qs = urllib.parse.urlencode({"member": member_param, "from": start, "to": end})
         body = f"""
         <h1>Attendance</h1>
+        {self._flash(params)}
         <form class="filters" method="get" action="/attendance">
-          <div><label>Member</label>
-            <select name="member">{''.join(options)}</select></div>
-          <div><label>From (YYYY-MM-DD)</label>
-            <input type="date" name="from" value="{_e(start)}"></div>
-          <div><label>To (YYYY-MM-DD)</label>
-            <input type="date" name="to" value="{_e(end)}"></div>
+          <div><label>Member</label><select name="member">{''.join(options)}</select></div>
+          <div><label>From</label><input type="date" name="from" value="{_attr(start)}"></div>
+          <div><label>To</label><input type="date" name="to" value="{_attr(end)}"></div>
           <button type="submit">Filter</button>
-          <a class="btn" href="/export.csv?{qs}">Export CSV</a>
+          <a class="btn secondary" href="/export.csv?{qs}">CSV</a>
+          <a class="btn secondary" href="/report.xlsx?{qs}">Excel</a>
         </form>
         <p class="muted">{len(entries)} record(s).</p>
-        <table>
-          <tr><th>Date</th><th>Member</th><th>In</th><th>Out</th>
-              <th>Type</th><th>Coordinator</th></tr>
-          {rows}
-        </table>
+        <table><tr><th>Date</th><th>Member</th><th>In</th><th>Out</th><th>Type</th>
+        <th>Coordinator</th><th>Late</th><th></th></tr>{rows}</table>
         """
         return layout("Attendance", body, active="att")
 
+    def _entry_edit_page(self, params) -> bytes:
+        try:
+            entry_id = int(params.get("id", ["0"])[0])
+        except ValueError:
+            entry_id = 0
+        e = self.db.get_entry(entry_id)
+        if e is None:
+            return layout("Attendance", "<h1>Entry not found</h1>"
+                          "<p><a href='/attendance'>Back</a></p>", active="att")
+
+        def opt(v):
+            return " selected" if e.clock_in_type == v else ""
+        late_checked = "checked" if e.is_late else ""
+        body = f"""
+        <h1>Edit attendance entry</h1>
+        <p class="muted">{_e(e.member_name)} (ID {e.telegram_id})</p>
+        <div class="panel">
+          <form class="stack" method="post" action="/entry/update">
+            <input type="hidden" name="id" value="{e.id}">
+            <div><label>Date</label><input type="date" name="date" value="{_attr(e.date)}"></div>
+            <div><label>Clock in (YYYY-MM-DD HH:MM:SS)</label>
+              <input name="clock_in_time" value="{_attr(e.clock_in_time)}"></div>
+            <div><label>Clock out</label>
+              <input name="clock_out_time" value="{_attr(e.clock_out_time)}"></div>
+            <div><label>Type</label><select name="clock_in_type">
+              <option value=""{opt(None)}>(none)</option>
+              <option value="Remote"{opt(TYPE_REMOTE)}>Remote</option>
+              <option value="On_Site"{opt(TYPE_ON_SITE)}>On_Site</option>
+            </select></div>
+            <div><label>Coordinator</label>
+              <input name="coordinator" value="{_attr(e.coordinator)}"></div>
+            <div style="flex-basis:100%"><label>Late remark</label>
+              <input name="late_remark" value="{_attr(e.late_remark)}"></div>
+            <div class="checks"><label><input type="checkbox" name="is_late" value="1"
+              {late_checked}> Marked late</label></div>
+            <div><button type="submit">Save</button>
+              <a class="btn secondary" href="/attendance">Cancel</a></div>
+          </form>
+        </div>
+        <form method="post" action="/entry/delete"
+              onsubmit="return confirm('Delete this entry permanently?')">
+          <input type="hidden" name="id" value="{e.id}">
+          <button class="btn danger" type="submit">Delete entry</button>
+        </form>
+        """
+        return layout("Edit entry", body, active="att")
+
+    # ================================================================== #
+    # Members (list / add / edit / delete)
+    # ================================================================== #
     def _members_page(self, params) -> bytes:
         members = self.db.list_members()
         rows = ""
         for m in members:
-            badge = (
-                '<span class="badge admin">Admin</span>'
-                if m.role == ROLE_ADMIN
-                else '<span class="badge user">Regular</span>'
-            )
+            badge = ('<span class="badge admin">Admin</span>' if m.role == ROLE_ADMIN
+                     else '<span class="badge user">Regular</span>')
             rows += (
-                f"<tr><td>{_e(m.name)}</td><td>{badge}</td>"
-                f"<td>{_e(m.coordinator)}</td><td class='muted'>{_e(m.telegram_id)}</td>"
-                f"<td class='muted'>{_e(m.created_at)}</td></tr>"
+                f"<tr><td>{_e(m.name)}</td><td>{badge}</td><td>{_e(m.unit)}</td>"
+                f"<td>{self._site_name(m.base_site_id)}</td><td>{_e(m.coordinator)}</td>"
+                f"<td class='muted'>{_e(m.telegram_id)}</td>"
+                f"<td class='actions'><a href='/member?id={m.telegram_id}'>Edit</a></td></tr>"
             )
-        if not rows:
-            rows = '<tr><td colspan="5" class="muted">No members yet.</td></tr>'
-
+        rows = rows or '<tr><td colspan="7" class="muted">No members yet.</td></tr>'
         body = f"""
         <h1>Members</h1>
         {self._flash(params)}
         <div class="panel">
           <h2>Add a member</h2>
           <form class="stack" method="post" action="/members/add">
-            <div><label>Telegram ID</label>
-              <input name="telegram_id" placeholder="e.g. 123456789"></div>
-            <div><label>Name</label>
-              <input name="name" placeholder="Full name"></div>
-            <div><label>Role</label>
-              <select name="role">
-                <option value="regular">Regular</option>
-                <option value="admin">Admin</option>
-              </select></div>
-            <div><label>Coordinator</label>
-              <input name="coordinator" placeholder="Optional"></div>
-            <div><button type="submit">Add member</button></div>
+            <div><label>Telegram ID</label><input name="telegram_id" placeholder="123456789"></div>
+            <div><label>Name</label><input name="name" placeholder="Full name"></div>
+            <div><label>Unit</label><input name="unit" placeholder="Department"></div>
+            <div><label>Base site</label><select name="base_site_id">{self._site_options(None)}</select></div>
+            <div><label>Role</label><select name="role">
+              <option value="regular">Regular</option><option value="admin">Admin</option>
+            </select></div>
+            <div><label>Coordinator</label><input name="coordinator" placeholder="Optional"></div>
+            <div><button type="submit">Add</button></div>
           </form>
-          <p class="muted" style="margin-bottom:0">The Telegram ID must be the
-          person's real numeric ID (they can get it from
-          <b>@userinfobot</b>) so the bot links their clock-ins. They can also
-          just message the bot <b>/register</b> themselves.</p>
+          <p class="muted" style="margin-bottom:0">Telegram ID must be the person's
+          real numeric ID (from @userinfobot); or they can /register themselves.</p>
         </div>
-        <table>
-          <tr><th>Name</th><th>Role</th><th>Coordinator</th>
-              <th>Telegram ID</th><th>Registered</th></tr>
-          {rows}
-        </table>
+        <table><tr><th>Name</th><th>Role</th><th>Unit</th><th>Base site</th>
+        <th>Coordinator</th><th>Telegram ID</th><th></th></tr>{rows}</table>
         """
         return layout("Members", body, active="mem")
 
+    def _member_edit_page(self, params) -> bytes:
+        try:
+            tid = int(params.get("id", ["0"])[0])
+        except ValueError:
+            tid = 0
+        m = self.db.get_member(tid)
+        if m is None:
+            return layout("Members", "<h1>Member not found</h1>"
+                          "<p><a href='/members'>Back</a></p>", active="mem")
+        role_admin = " selected" if m.role == ROLE_ADMIN else ""
+        role_reg = " selected" if m.role == ROLE_REGULAR else ""
+        body = f"""
+        <h1>Edit member</h1>
+        <p class="muted">Telegram ID {m.telegram_id}</p>
+        <div class="panel">
+          <form class="stack" method="post" action="/members/update">
+            <input type="hidden" name="telegram_id" value="{m.telegram_id}">
+            <div><label>Name</label><input name="name" value="{_attr(m.name)}"></div>
+            <div><label>Unit</label><input name="unit" value="{_attr(m.unit)}"></div>
+            <div><label>Base site</label>
+              <select name="base_site_id">{self._site_options(m.base_site_id)}</select></div>
+            <div><label>Role</label><select name="role">
+              <option value="regular"{role_reg}>Regular</option>
+              <option value="admin"{role_admin}>Admin</option>
+            </select></div>
+            <div><label>Coordinator</label><input name="coordinator" value="{_attr(m.coordinator)}"></div>
+            <div><button type="submit">Save</button>
+              <a class="btn secondary" href="/members">Cancel</a></div>
+          </form>
+        </div>
+        <form method="post" action="/members/delete"
+              onsubmit="return confirm('Delete this member and ALL their attendance?')">
+          <input type="hidden" name="telegram_id" value="{m.telegram_id}">
+          <button class="btn danger" type="submit">Delete member</button>
+        </form>
+        """
+        return layout("Edit member", body, active="mem")
+
+    # ================================================================== #
+    # Analytics
+    # ================================================================== #
+    def _analytics_page(self, params) -> bytes:
+        tz = self.config.tz_offset_hours
+        default_start, default_end = timeutil.month_range(timeutil.now(tz))
+        start = params.get("from", [default_start])[0].strip()
+        end = params.get("to", [default_end])[0].strip()
+        start_v = start if timeutil.is_valid_date(start) else default_start
+        end_v = end if timeutil.is_valid_date(end) else default_end
+
+        sched = self.db.get_work_schedule()
+        workdays = timeutil.count_workdays(start_v, end_v, sched.days)
+        entries = self.db.query_attendance(None, start_v, end_v)
+        members = {m.telegram_id: m for m in self.db.list_members()}
+
+        agg = {}
+        for e in entries:
+            a = agg.setdefault(e.telegram_id, {
+                "hours": 0.0, "days": set(), "late": 0, "onsite": 0, "remote": 0})
+            a["hours"] += timeutil.duration_hours(e.clock_in_time, e.clock_out_time)
+            a["days"].add(e.date)
+            a["late"] += 1 if e.is_late else 0
+            if e.clock_in_type == TYPE_ON_SITE:
+                a["onsite"] += 1
+            elif e.clock_in_type == TYPE_REMOTE:
+                a["remote"] += 1
+
+        rows = ""
+        total_hours = 0.0
+        total_late = 0
+        for tid, m in sorted(members.items(), key=lambda kv: kv[1].name.lower()):
+            a = agg.get(tid)
+            if not a:
+                continue
+            days = len(a["days"])
+            rate = f"{(days / workdays * 100):.0f}%" if workdays else "&mdash;"
+            total_hours += a["hours"]
+            total_late += a["late"]
+            rows += (
+                f"<tr><td>{_e(m.name)}</td><td>{_e(m.unit)}</td>"
+                f"<td>{self._site_name(m.base_site_id)}</td><td>{days}</td>"
+                f"<td>{timeutil.format_hours(a['hours'])}</td><td>{a['late']}</td>"
+                f"<td>{a['onsite']}</td><td>{a['remote']}</td><td>{rate}</td></tr>"
+            )
+        rows = rows or '<tr><td colspan="9" class="muted">No data in range.</td></tr>'
+        cards = [
+            (len([1 for a in agg.values()]), "Members active"),
+            (timeutil.format_hours(total_hours), "Total hours"),
+            (total_late, "Late arrivals"),
+            (workdays, "Work days in range"),
+        ]
+        cards_html = "".join(
+            f'<div class="card"><div class="num">{n}</div>'
+            f'<div class="lbl">{_e(lbl)}</div></div>' for n, lbl in cards)
+        body = f"""
+        <h1>Analytics</h1>
+        <form class="filters" method="get" action="/analytics">
+          <div><label>From</label><input type="date" name="from" value="{_attr(start_v)}"></div>
+          <div><label>To</label><input type="date" name="to" value="{_attr(end_v)}"></div>
+          <button type="submit">Apply</button>
+          <a class="btn secondary" href="/report.xlsx?from={_attr(start_v)}&to={_attr(end_v)}">Excel report</a>
+        </form>
+        <div class="cards">{cards_html}</div>
+        <h2>Per-member ({_e(start_v)} to {_e(end_v)})</h2>
+        <table><tr><th>Member</th><th>Unit</th><th>Base site</th><th>Days</th>
+        <th>Hours</th><th>Late</th><th>On-site</th><th>Remote</th><th>Attendance</th></tr>
+        {rows}</table>
+        """
+        return layout("Analytics", body, active="analytics")
+
+    # ================================================================== #
+    # Map
+    # ================================================================== #
+    def _map_page(self, params) -> bytes:
+        sites = [{"name": s.name, "lat": s.latitude, "lon": s.longitude}
+                 for s in self.db.list_sites()]
+        points = []
+        for e in self.db.query_attendance():
+            if e.latitude is not None and e.longitude is not None:
+                points.append({"name": e.member_name, "date": e.date,
+                               "lat": e.latitude, "lon": e.longitude})
+        points = points[-300:]
+        center = sites[0] if sites else (points[-1] if points else {"lat": 11.5564, "lon": 104.9282})
+        data = json.dumps({"sites": sites, "points": points, "center": center})
+        head = (
+            '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>'
+            '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>'
+        )
+        body = f"""
+        <h1>Map</h1>
+        {self._flash(params)}
+        <p class="muted">Green = configured sites, blue = on-site clock-in points.
+        Click the map to fill the coordinates below, then add a site.</p>
+        <div id="map"></div>
+        <div class="panel" style="margin-top:16px">
+          <h2>Add a site</h2>
+          <form class="stack" method="post" action="/sites/add">
+            <div><label>Name</label><input name="name" placeholder="e.g. HQ" required></div>
+            <div><label>Latitude</label><input name="latitude" id="lat" required></div>
+            <div><label>Longitude</label><input name="longitude" id="lon" required></div>
+            <div><button type="submit">Add site</button></div>
+          </form>
+        </div>
+        <script>
+        var D = {data};
+        var c = D.center;
+        var map = L.map('map').setView([c.lat, c.lon], 15);
+        L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
+          {{maxZoom: 19, attribution: '&copy; OpenStreetMap'}}).addTo(map);
+        D.sites.forEach(function(s) {{
+          L.circleMarker([s.lat, s.lon], {{color:'#34d399', radius:9}})
+            .addTo(map).bindPopup('Site: ' + s.name);
+        }});
+        D.points.forEach(function(p) {{
+          L.circleMarker([p.lat, p.lon], {{color:'#38bdf8', radius:5}})
+            .addTo(map).bindPopup(p.name + '<br>' + p.date);
+        }});
+        map.on('click', function(ev) {{
+          document.getElementById('lat').value = ev.latlng.lat.toFixed(6);
+          document.getElementById('lon').value = ev.latlng.lng.toFixed(6);
+        }});
+        </script>
+        """
+        return layout("Map", body, active="map", head_extra=head)
+
+    # ================================================================== #
+    # Settings (location, sites, schedule, audit)
+    # ================================================================== #
     def _settings_page(self, params) -> bytes:
         loc = self.db.get_configured_location()
-        if loc:
-            lat, lon = loc
-            latv, lonv = str(lat), str(lon)
-            current = (
-                f"Current on-site location: <b>{_e(lat)}, {_e(lon)}</b> &nbsp;"
-                f"(<a href='https://www.google.com/maps?q={lat},{lon}' "
-                f"target='_blank' rel='noopener'>view on map</a>)"
-            )
-        else:
-            latv = lonv = ""
-            current = "No on-site location configured yet."
+        latv, lonv = (str(loc[0]), str(loc[1])) if loc else ("", "")
         radius = self.config.geofence_radius_meters
+
+        sites = self.db.list_sites()
+        site_rows = ""
+        for s in sites:
+            site_rows += (
+                f"<tr><td>{_e(s.name)}</td><td>{_e(s.latitude)}</td>"
+                f"<td>{_e(s.longitude)}</td><td class='actions'>"
+                f"<form method='post' action='/sites/delete' style='display:inline'"
+                f" onsubmit=\"return confirm('Delete site {_attr(s.name)}?')\">"
+                f"<input type='hidden' name='id' value='{s.id}'>"
+                f"<button class='btn danger' type='submit'>Delete</button></form></td></tr>"
+            )
+        site_rows = site_rows or '<tr><td colspan="4" class="muted">No sites yet.</td></tr>'
+
+        sched = self.db.get_work_schedule()
+        day_checks = ""
+        for i, name in enumerate(timeutil.WEEKDAY_NAMES):
+            checked = "checked" if i in sched.days else ""
+            day_checks += (f'<label><input type="checkbox" name="day_{i}" value="1" '
+                           f'{checked}> {name}</label>')
+        rem_checked = "checked" if sched.reminders_enabled else ""
+
+        audit = self.db.list_audit(limit=15)
+        audit_rows = "".join(
+            f"<tr><td class='muted'>{_e(a['at'])}</td><td>{_e(a['action'])}</td>"
+            f"<td>{_e(a['detail'])}</td></tr>" for a in audit
+        ) or '<tr><td colspan="3" class="muted">No changes recorded yet.</td></tr>'
 
         body = f"""
         <h1>Settings</h1>
         {self._flash(params)}
+        <div class="row2">
+          <div class="panel">
+            <h2>Default on-site location</h2>
+            <p class="muted">Used when no named sites exist. Manage multiple sites
+            on the <a href="/map">Map</a> page.</p>
+            <form class="stack" method="post" action="/settings/location">
+              <div><label>Latitude</label><input name="latitude" value="{_attr(latv)}"></div>
+              <div><label>Longitude</label><input name="longitude" value="{_attr(lonv)}"></div>
+              <div><button type="submit">Save</button></div>
+            </form>
+            <p class="muted" style="margin-bottom:0">Geofence radius: {radius:.0f} m.</p>
+          </div>
+          <div class="panel">
+            <h2>Work schedule</h2>
+            <form method="post" action="/settings/schedule">
+              <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end">
+                <div><label>Start</label><input type="time" name="start" value="{_attr(sched.start)}"></div>
+                <div><label>End</label><input type="time" name="end" value="{_attr(sched.end)}"></div>
+              </div>
+              <p class="muted" style="margin:12px 0 4px">Working days</p>
+              <div class="checks">{day_checks}</div>
+              <p class="muted" style="margin:12px 0 4px">Reminders</p>
+              <div class="checks"><label><input type="checkbox" name="reminders" value="1"
+                {rem_checked}> Send daily clock-in / clock-out reminders</label></div>
+              <div style="margin-top:14px"><button type="submit">Save schedule</button></div>
+            </form>
+          </div>
+        </div>
         <div class="panel">
-          <h2>On-site location</h2>
-          <p class="muted">{current}</p>
-          <form class="stack" method="post" action="/settings/location">
-            <div><label>Latitude</label>
-              <input name="latitude" value="{_e(latv)}" placeholder="11.5564"></div>
-            <div><label>Longitude</label>
-              <input name="longitude" value="{_e(lonv)}" placeholder="104.9282"></div>
-            <div><button type="submit">Save location</button></div>
-          </form>
-          <p class="muted" style="margin-bottom:0">On-site clock-ins must be
-          within <b>{radius:.0f} meters</b> of this point. Tip: open Google Maps,
-          right-click your office, and copy the latitude, longitude.</p>
+          <h2>Sites</h2>
+          <table class="small"><tr><th>Name</th><th>Latitude</th><th>Longitude</th><th></th></tr>
+          {site_rows}</table>
+          <p class="muted" style="margin-bottom:0">Add sites on the
+          <a href="/map">Map</a> page (click the map to grab coordinates).</p>
+        </div>
+        <div class="panel">
+          <h2>Recent changes (audit log)</h2>
+          <table class="small"><tr><th>When</th><th>Action</th><th>Detail</th></tr>
+          {audit_rows}</table>
         </div>
         """
         return layout("Settings", body, active="set")
 
-    def _entry_row(self, e, include_member: bool) -> str:
-        if e.clock_in_type == TYPE_ON_SITE:
-            type_badge = '<span class="badge onsite">On_Site</span>'
-        elif e.clock_in_type == TYPE_REMOTE:
-            type_badge = '<span class="badge remote">Remote</span>'
+    # ================================================================== #
+    # Write actions
+    # ================================================================== #
+    def _add_member(self, form) -> None:
+        tid = form.get("telegram_id", "").strip()
+        name = form.get("name", "").strip()
+        role = form.get("role", ROLE_REGULAR).strip()
+        coordinator = form.get("coordinator", "").strip() or None
+        unit = form.get("unit", "").strip() or None
+        base = self._parse_site_id(form.get("base_site_id"))
+        if not tid.lstrip("-").isdigit() or not name:
+            self._flash_redirect("/members", err="Provide a numeric Telegram ID and a name.")
+            return
+        if role not in (ROLE_ADMIN, ROLE_REGULAR):
+            role = ROLE_REGULAR
+        tid_int = int(tid)
+        if self.db.get_member(tid_int) is not None:
+            self._flash_redirect("/members", err="A member with that Telegram ID exists.")
+            return
+        self.db.create_member(tid_int, name, role, coordinator,
+                              timeutil.now_iso(self.config.tz_offset_hours), unit, base)
+        self._audit("member.add", f"{name} ({tid_int})")
+        self._flash_redirect("/members", ok=f"Added member: {name}.")
+
+    def _update_member(self, form) -> None:
+        tid = form.get("telegram_id", "").strip()
+        if not tid.lstrip("-").isdigit() or self.db.get_member(int(tid)) is None:
+            self._flash_redirect("/members", err="Member not found.")
+            return
+        name = form.get("name", "").strip()
+        if not name:
+            self._flash_redirect(f"/member?id={tid}", err="Name cannot be empty.")
+            return
+        role = form.get("role", ROLE_REGULAR).strip()
+        if role not in (ROLE_ADMIN, ROLE_REGULAR):
+            role = ROLE_REGULAR
+        self.db.update_member(
+            int(tid), name, role,
+            form.get("coordinator", "").strip() or None,
+            form.get("unit", "").strip() or None,
+            self._parse_site_id(form.get("base_site_id")),
+        )
+        self._audit("member.update", f"{name} ({tid})")
+        self._flash_redirect("/members", ok=f"Updated {name}.")
+
+    def _delete_member(self, form) -> None:
+        tid = form.get("telegram_id", "").strip()
+        if tid.lstrip("-").isdigit() and self.db.get_member(int(tid)) is not None:
+            m = self.db.get_member(int(tid))
+            self.db.delete_member(int(tid))
+            self._audit("member.delete", f"{m.name} ({tid})")
+            self._flash_redirect("/members", ok="Member deleted.")
         else:
-            type_badge = _e(None)
-        member_cell = f"<td>{_e(e.member_name)}</td>" if include_member else ""
-        return (
-            f"<tr><td>{_e(e.date)}</td>{member_cell}"
-            f"<td>{_e(e.clock_in_time)}</td><td>{_e(e.clock_out_time)}</td>"
-            f"<td>{type_badge}</td><td>{_e(e.coordinator)}</td></tr>"
+            self._flash_redirect("/members", err="Member not found.")
+
+    def _update_entry(self, form) -> None:
+        try:
+            entry_id = int(form.get("id", "0"))
+        except ValueError:
+            entry_id = 0
+        if self.db.get_entry(entry_id) is None:
+            self._flash_redirect("/attendance", err="Entry not found.")
+            return
+        date = form.get("date", "").strip()
+        if not timeutil.is_valid_date(date):
+            self._flash_redirect(f"/entry?id={entry_id}", err="Invalid date.")
+            return
+        self.db.update_entry(
+            entry_id, date,
+            form.get("clock_in_time", "").strip() or None,
+            form.get("clock_out_time", "").strip() or None,
+            form.get("clock_in_type", "").strip() or None,
+            form.get("coordinator", "").strip() or None,
+            form.get("late_remark", "").strip() or None,
+            1 if form.get("is_late") == "1" else 0,
+        )
+        self._audit("entry.update", f"entry {entry_id} on {date}")
+        self._flash_redirect("/attendance", ok="Entry updated.")
+
+    def _delete_entry(self, form) -> None:
+        try:
+            entry_id = int(form.get("id", "0"))
+        except ValueError:
+            entry_id = 0
+        if self.db.get_entry(entry_id) is None:
+            self._flash_redirect("/attendance", err="Entry not found.")
+            return
+        self.db.delete_entry(entry_id)
+        self._audit("entry.delete", f"entry {entry_id}")
+        self._flash_redirect("/attendance", ok="Entry deleted.")
+
+    def _add_site(self, form) -> None:
+        name = form.get("name", "").strip()
+        try:
+            lat = float(form.get("latitude", "").strip())
+            lon = float(form.get("longitude", "").strip())
+        except ValueError:
+            self._flash_redirect("/map", err="Latitude and longitude must be numbers.")
+            return
+        if not name:
+            self._flash_redirect("/map", err="Please give the site a name.")
+            return
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            self._flash_redirect("/map", err="Coordinates out of range.")
+            return
+        self.db.add_site(name, lat, lon, timeutil.now_iso(self.config.tz_offset_hours))
+        self._audit("site.add", f"{name} ({lat}, {lon})")
+        self._flash_redirect("/map", ok=f"Site '{name}' added.")
+
+    def _delete_site(self, form) -> None:
+        try:
+            site_id = int(form.get("id", "0"))
+        except ValueError:
+            site_id = 0
+        site = self.db.get_site(site_id)
+        if site is None:
+            self._flash_redirect("/settings", err="Site not found.")
+            return
+        self.db.delete_site(site_id)
+        self._audit("site.delete", site.name)
+        self._flash_redirect("/settings", ok=f"Site '{site.name}' deleted.")
+
+    def _set_location(self, form) -> None:
+        try:
+            lat = float(form.get("latitude", "").strip())
+            lon = float(form.get("longitude", "").strip())
+        except ValueError:
+            self._flash_redirect("/settings", err="Latitude and longitude must be numbers.")
+            return
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            self._flash_redirect("/settings", err="Coordinates out of range.")
+            return
+        self.db.set_configured_location(lat, lon)
+        self._audit("location.set", f"{lat}, {lon}")
+        self._flash_redirect("/settings", ok="Default location updated.")
+
+    def _set_schedule(self, form) -> None:
+        start = form.get("start", "").strip()
+        end = form.get("end", "").strip()
+        if not timeutil.is_valid_hhmm(start) or not timeutil.is_valid_hhmm(end):
+            self._flash_redirect("/settings", err="Start/end must be valid HH:MM times.")
+            return
+        days = {i for i in range(7) if form.get(f"day_{i}") == "1"}
+        reminders = form.get("reminders") == "1"
+        self.db.set_work_schedule(start, end, days, reminders)
+        self._audit("schedule.set", f"{start}-{end} days={sorted(days)} rem={reminders}")
+        self._flash_redirect("/settings", ok="Work schedule saved.")
+
+    # ================================================================== #
+    # Exports
+    # ================================================================== #
+    def _report_rows(self, entries):
+        for e in entries:
+            yield [
+                e.member_name, e.date, e.clock_in_time or "", e.clock_out_time or "",
+                round(timeutil.duration_hours(e.clock_in_time, e.clock_out_time), 2),
+                e.clock_in_type or "", e.coordinator or "",
+                "Yes" if e.is_late else "No", e.late_remark or "",
+            ]
+
+    def _export_csv(self, params) -> None:
+        _mp, _s, _en, tid, sv, ev = self._parse_filter(params)
+        entries = self.db.query_attendance(tid, sv, ev)
+        stamp = timeutil.today_iso(self.config.tz_offset_hours)
+        self._send(
+            200, build_csv(entries), "text/csv; charset=utf-8",
+            [("Content-Disposition", f'attachment; filename="attendance_{stamp}.csv"')],
         )
 
-    def _export(self, params) -> None:
-        member_param = params.get("member", ["all"])[0]
-        start = params.get("from", [""])[0].strip()
-        end = params.get("to", [""])[0].strip()
-        telegram_id = None
-        if member_param not in ("", "all"):
-            try:
-                telegram_id = int(member_param)
-            except ValueError:
-                telegram_id = None
-        start_v = start if timeutil.is_valid_date(start) else None
-        end_v = end if timeutil.is_valid_date(end) else None
-        entries = self.db.query_attendance(
-            telegram_id=telegram_id, start_date=start_v, end_date=end_v
-        )
-        csv_bytes = build_csv(entries)
-        stamp = timeutil.today_iso(self.config.tz_offset_hours)
-        filename = f"attendance_{stamp}.csv"
+    def _export_xlsx(self, params) -> None:
+        _mp, _s, _en, tid, sv, ev = self._parse_filter(params)
+        entries = self.db.query_attendance(tid, sv, ev)
+        header = ["Member", "Date", "Clock In", "Clock Out", "Hours", "Type",
+                  "Coordinator", "Late", "Late Remark"]
+        data = build_xlsx(header, self._report_rows(entries), sheet_name="Attendance")
+        stamp = sv or timeutil.today_iso(self.config.tz_offset_hours)
         self._send(
-            200,
-            csv_bytes,
-            content_type="text/csv; charset=utf-8",
-            extra_headers=[
-                ("Content-Disposition", f'attachment; filename="{filename}"')
-            ],
+            200, data,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            [("Content-Disposition", f'attachment; filename="attendance_{stamp}.xlsx"')],
         )
+
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _parse_site_id(raw):
+        try:
+            v = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return v if v > 0 else None
 
 
 # --------------------------------------------------------------------- #
@@ -638,17 +1031,13 @@ class _PortalHandler(BaseHTTPRequestHandler):
 def start_web_portal(config: Config) -> ThreadingHTTPServer:
     """Start the admin portal in a daemon thread; returns the server.
 
-    The portal uses its OWN database connection (a separate Database instance
+    The portal uses its own database connection (a separate Database instance
     on the same file) so it never contends with the bot thread's connection.
     """
     server = ThreadingHTTPServer(("0.0.0.0", config.health_port), _PortalHandler)
     server.ctx_config = config  # type: ignore[attr-defined]
     server.ctx_db = Database(config.db_path)  # type: ignore[attr-defined]
-    thread = threading.Thread(
-        target=server.serve_forever, name="web-portal", daemon=True
-    )
+    thread = threading.Thread(target=server.serve_forever, name="web-portal", daemon=True)
     thread.start()
-    logger.info(
-        "Admin web portal listening on 0.0.0.0:%d", config.health_port
-    )
+    logger.info("Admin web portal listening on 0.0.0.0:%d", config.health_port)
     return server
