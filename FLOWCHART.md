@@ -200,11 +200,13 @@ flowchart TD
     AUTH -->|Yes| DASH["Dashboard:<br/>stats + 14-day chart"]
     DASH --> PAGES{"Navigate"}
     PAGES -->|Attendance| TABLE["Filterable table<br/>+ CSV export"]
-    PAGES -->|Members| MEM["Members & roles"]
+    PAGES -->|Members| MEM["View members & roles<br/>+ add a member"]
+    PAGES -->|Settings| SET["Configure on-site<br/>location (lat/lon)"]
 ```
 
-> The dashboard only runs if `ADMIN_PORTAL_PASSWORD` is set. It is read-only and
-> shares the bot's database.
+> The dashboard only runs if `ADMIN_PORTAL_PASSWORD` is set and shares the bot's
+> database. Changes made here (new members, on-site location) are used by the
+> bot immediately.
 
 ---
 

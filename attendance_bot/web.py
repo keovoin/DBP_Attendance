@@ -23,7 +23,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import Config
-from .db import ROLE_ADMIN, TYPE_ON_SITE, TYPE_REMOTE, Database
+from .db import ROLE_ADMIN, ROLE_REGULAR, TYPE_ON_SITE, TYPE_REMOTE, Database
 from .reports import build_csv
 from . import timeutil
 
@@ -117,6 +117,16 @@ button, .btn { background:var(--accent); color:#04283a; border:none; font-weight
 .login-wrap input { width:100%; margin-bottom:12px; }
 .login-wrap button { width:100%; }
 .err { color:#f87171; font-size:14px; margin-bottom:10px; }
+.ok { background:rgba(52,211,153,.15); color:var(--accent2); padding:10px 12px;
+      border-radius:8px; margin-bottom:16px; font-size:14px; }
+.banner-err { background:rgba(248,113,113,.15); color:#f87171; padding:10px 12px;
+      border-radius:8px; margin-bottom:16px; font-size:14px; }
+.panel { background:var(--card); border:1px solid var(--border); border-radius:12px;
+      padding:18px; margin-bottom:22px; }
+.panel h2 { margin-top:0; }
+form.stack { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+form.stack > div { flex:1; min-width:150px; }
+form.stack input, form.stack select { width:100%; }
 """
 
 
@@ -137,6 +147,7 @@ def layout(title: str, body: str, active: str = "") -> bytes:
     {nav("Dashboard", "/", "dash")}
     {nav("Attendance", "/attendance", "att")}
     {nav("Members", "/members", "mem")}
+    {nav("Settings", "/settings", "set")}
     <a href="/logout">Log out</a>
   </nav>
 </header>
@@ -252,7 +263,9 @@ class _PortalHandler(BaseHTTPRequestHandler):
         elif path == "/attendance":
             self._send(200, self._attendance_page(params))
         elif path == "/members":
-            self._send(200, self._members_page())
+            self._send(200, self._members_page(params))
+        elif path == "/settings":
+            self._send(200, self._settings_page(params))
         elif path == "/export.csv":
             self._export(params)
         else:
@@ -261,13 +274,31 @@ class _PortalHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
-        if path != "/login":
-            self._send(404, b"not found", "text/plain; charset=utf-8")
+        form = self._read_form()
+
+        if path == "/login":
+            self._handle_login(form)
             return
+
+        # Every other POST is a state change and requires authentication.
+        if not self._is_authed():
+            self._redirect("/login")
+            return
+
+        if path == "/members/add":
+            self._add_member(form)
+        elif path == "/settings/location":
+            self._set_location(form)
+        else:
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    def _read_form(self) -> dict:
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(length).decode("utf-8") if length else ""
-        fields = urllib.parse.parse_qs(body)
-        password = (fields.get("password", [""])[0])
+        return {k: v[0] for k, v in urllib.parse.parse_qs(body).items()}
+
+    def _handle_login(self, form: dict) -> None:
+        password = form.get("password", "")
         expected = self.config.admin_portal_password
         if expected and hmac.compare_digest(password, expected):
             token = make_session_token(self.config.portal_secret)
@@ -282,6 +313,67 @@ class _PortalHandler(BaseHTTPRequestHandler):
             self._redirect("/", [("Set-Cookie", m.OutputString())])
         else:
             self._send(200, login_page("Incorrect password."))
+
+    # -- write actions --------------------------------------------------
+    def _add_member(self, form: dict) -> None:
+        tid = form.get("telegram_id", "").strip()
+        name = form.get("name", "").strip()
+        role = form.get("role", ROLE_REGULAR).strip()
+        coordinator = form.get("coordinator", "").strip() or None
+
+        if not tid.lstrip("-").isdigit() or not name:
+            self._flash_redirect(
+                "/members", err="Provide a numeric Telegram ID and a name."
+            )
+            return
+        if role not in (ROLE_ADMIN, ROLE_REGULAR):
+            role = ROLE_REGULAR
+        tid_int = int(tid)
+        if self.db.get_member(tid_int) is not None:
+            self._flash_redirect(
+                "/members", err="A member with that Telegram ID already exists."
+            )
+            return
+        self.db.create_member(
+            telegram_id=tid_int,
+            name=name,
+            role=role,
+            coordinator=coordinator,
+            created_at=timeutil.now_iso(self.config.tz_offset_hours),
+        )
+        self._flash_redirect("/members", ok=f"Added member: {name}.")
+
+    def _set_location(self, form: dict) -> None:
+        try:
+            lat = float(form.get("latitude", "").strip())
+            lon = float(form.get("longitude", "").strip())
+        except ValueError:
+            self._flash_redirect(
+                "/settings", err="Latitude and longitude must be numbers."
+            )
+            return
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            self._flash_redirect(
+                "/settings",
+                err="Latitude must be -90..90 and longitude -180..180.",
+            )
+            return
+        self.db.set_configured_location(lat, lon)
+        self._flash_redirect("/settings", ok=f"On-site location set to {lat}, {lon}.")
+
+    def _flash_redirect(self, path: str, *, ok: str = "", err: str = "") -> None:
+        key, msg = ("ok", ok) if ok else ("err", err)
+        self._redirect(f"{path}?{key}={urllib.parse.quote(msg)}")
+
+    @staticmethod
+    def _flash(params) -> str:
+        ok = params.get("ok", [""])[0]
+        err = params.get("err", [""])[0]
+        if ok:
+            return f'<div class="ok">{_e(ok)}</div>'
+        if err:
+            return f'<div class="banner-err">{_e(err)}</div>'
+        return ""
 
     # -- pages ----------------------------------------------------------
     def _dashboard(self) -> bytes:
@@ -414,7 +506,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         """
         return layout("Attendance", body, active="att")
 
-    def _members_page(self) -> bytes:
+    def _members_page(self, params) -> bytes:
         members = self.db.list_members()
         rows = ""
         for m in members:
@@ -430,8 +522,31 @@ class _PortalHandler(BaseHTTPRequestHandler):
             )
         if not rows:
             rows = '<tr><td colspan="5" class="muted">No members yet.</td></tr>'
+
         body = f"""
         <h1>Members</h1>
+        {self._flash(params)}
+        <div class="panel">
+          <h2>Add a member</h2>
+          <form class="stack" method="post" action="/members/add">
+            <div><label>Telegram ID</label>
+              <input name="telegram_id" placeholder="e.g. 123456789"></div>
+            <div><label>Name</label>
+              <input name="name" placeholder="Full name"></div>
+            <div><label>Role</label>
+              <select name="role">
+                <option value="regular">Regular</option>
+                <option value="admin">Admin</option>
+              </select></div>
+            <div><label>Coordinator</label>
+              <input name="coordinator" placeholder="Optional"></div>
+            <div><button type="submit">Add member</button></div>
+          </form>
+          <p class="muted" style="margin-bottom:0">The Telegram ID must be the
+          person's real numeric ID (they can get it from
+          <b>@userinfobot</b>) so the bot links their clock-ins. They can also
+          just message the bot <b>/register</b> themselves.</p>
+        </div>
         <table>
           <tr><th>Name</th><th>Role</th><th>Coordinator</th>
               <th>Telegram ID</th><th>Registered</th></tr>
@@ -439,6 +554,41 @@ class _PortalHandler(BaseHTTPRequestHandler):
         </table>
         """
         return layout("Members", body, active="mem")
+
+    def _settings_page(self, params) -> bytes:
+        loc = self.db.get_configured_location()
+        if loc:
+            lat, lon = loc
+            latv, lonv = str(lat), str(lon)
+            current = (
+                f"Current on-site location: <b>{_e(lat)}, {_e(lon)}</b> &nbsp;"
+                f"(<a href='https://www.google.com/maps?q={lat},{lon}' "
+                f"target='_blank' rel='noopener'>view on map</a>)"
+            )
+        else:
+            latv = lonv = ""
+            current = "No on-site location configured yet."
+        radius = self.config.geofence_radius_meters
+
+        body = f"""
+        <h1>Settings</h1>
+        {self._flash(params)}
+        <div class="panel">
+          <h2>On-site location</h2>
+          <p class="muted">{current}</p>
+          <form class="stack" method="post" action="/settings/location">
+            <div><label>Latitude</label>
+              <input name="latitude" value="{_e(latv)}" placeholder="11.5564"></div>
+            <div><label>Longitude</label>
+              <input name="longitude" value="{_e(lonv)}" placeholder="104.9282"></div>
+            <div><button type="submit">Save location</button></div>
+          </form>
+          <p class="muted" style="margin-bottom:0">On-site clock-ins must be
+          within <b>{radius:.0f} meters</b> of this point. Tip: open Google Maps,
+          right-click your office, and copy the latitude, longitude.</p>
+        </div>
+        """
+        return layout("Settings", body, active="set")
 
     def _entry_row(self, e, include_member: bool) -> str:
         if e.clock_in_type == TYPE_ON_SITE:

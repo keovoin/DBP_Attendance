@@ -98,9 +98,12 @@ log in with that password, and you get:
   clocked in, on-site vs remote) and a 14-day activity chart.
 - **Attendance** — a filterable table (by member and date range) with one-click
   CSV export.
-- **Members** — everyone's role, coordinator, and registration date.
+- **Members** — everyone's role, coordinator, and registration date, plus a form
+  to **add a member** (by Telegram ID, name, role, coordinator).
+- **Settings** — **configure the on-site location** (latitude/longitude) used for
+  On_Site geofence validation.
 
-The dashboard is read-only, protected by a signed `HttpOnly` session cookie,
+The dashboard is protected by a signed `HttpOnly` session cookie,
 and shares the bot's database (SQLite in WAL mode for safe concurrent reads).
 If `ADMIN_PORTAL_PASSWORD` is empty, only a health endpoint is served.
 
