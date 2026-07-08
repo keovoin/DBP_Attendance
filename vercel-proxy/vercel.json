@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/",
+      "destination": "https://dbp-attendance.fly.dev/"
+    },
+    {
       "source": "/:path*",
       "destination": "https://dbp-attendance.fly.dev/:path*"
     }
