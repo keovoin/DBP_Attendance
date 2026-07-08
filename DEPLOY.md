@@ -30,11 +30,16 @@ Everything the bot needs is in this repo:
 
 From the repository root (on the `feat/attendance-tracker-bot` branch):
 
+> **Already ran `fly launch`?** Then the `dbp-attendance` app already exists.
+> Skip step 1, make sure the volume exists (step 2) and secrets are set
+> (step 3), then just run `fly deploy` with the corrected `fly.toml` from this
+> repo.
+
 ```bash
 # 1. Register the app WITHOUT deploying yet. This reuses the committed fly.toml.
-#    If the name "dbp-attendance-bot" is taken, edit `app = ...` in fly.toml
+#    If the name "dbp-attendance" is taken, edit `app = ...` in fly.toml
 #    (or let this command assign a unique name).
-fly launch --no-deploy --copy-config --name dbp-attendance-bot --region sin
+fly launch --no-deploy --copy-config --name dbp-attendance --region sin
 
 # 2. Create the persistent volume for the database (1 GB is plenty).
 #    Use the SAME region as primary_region in fly.toml.
@@ -66,7 +71,7 @@ Now open Telegram, find your bot, and send `/register`. Because your ID is in
 | --- | --- |
 | Redeploy after code changes | `fly deploy` |
 | Tail logs | `fly logs` |
-| Restart the bot | `fly apps restart dbp-attendance-bot` |
+| Restart the bot | `fly apps restart dbp-attendance` |
 | Change a setting (e.g. timezone) | edit `[env]` in `fly.toml`, then `fly deploy` |
 | Rotate the bot token | `fly secrets set BOT_TOKEN="new-token"` (auto-redeploys) |
 | Open a shell on the machine | `fly ssh console` |
