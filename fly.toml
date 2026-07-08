@@ -19,7 +19,7 @@ primary_region = "sin"
 # separately with `fly secrets set` so they are never committed to git.
 [env]
   DB_PATH = "/data/attendance.db"
-  TZ_OFFSET_HOURS = "7"
+  TZ_OFFSET_HOURS = "7"   # Cambodia / Indochina Time (ICT, UTC+7)
   GEOFENCE_RADIUS_METERS = "20"
   POLL_TIMEOUT_SECONDS = "30"
 

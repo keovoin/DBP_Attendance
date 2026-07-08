@@ -55,7 +55,7 @@ class Config:
     bot_token: str
     db_path: str = "data/attendance.db"
     admin_telegram_ids: set[int] = field(default_factory=set)
-    tz_offset_hours: float = 0.0
+    tz_offset_hours: float = 7.0  # Cambodia / Indochina Time (ICT, UTC+7)
     geofence_radius_meters: float = 20.0
     poll_timeout_seconds: int = 30
 
@@ -88,7 +88,7 @@ class Config:
             admin_telegram_ids=_parse_admin_ids(
                 os.environ.get("ADMIN_TELEGRAM_IDS", "")
             ),
-            tz_offset_hours=_float("TZ_OFFSET_HOURS", 0.0),
+            tz_offset_hours=_float("TZ_OFFSET_HOURS", 7.0),
             geofence_radius_meters=_float("GEOFENCE_RADIUS_METERS", 20.0),
             poll_timeout_seconds=_int("POLL_TIMEOUT_SECONDS", 30),
         )
