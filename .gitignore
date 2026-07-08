@@ -1,0 +1,25 @@
+# Environment / secrets
+.env
+
+# Data store
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Exports generated at runtime
+exports/
+*.csv
+
+# OS
+.DS_Store
