@@ -84,44 +84,72 @@ def _attr(value: object) -> str:
 
 
 PAGE_CSS = """
-:root { --bg:#0f172a; --card:#1e293b; --muted:#94a3b8; --text:#e2e8f0;
-        --accent:#38bdf8; --accent2:#34d399; --border:#334155; --danger:#f87171; }
+:root, :root[data-theme="dark"] {
+  --bg:#0f172a; --card:#1e293b; --muted:#94a3b8; --text:#e2e8f0;
+  --accent:#38bdf8; --accent2:#34d399; --border:#334155; --danger:#f87171;
+  --th-bg:#172033; --input-bg:#0b1220; --btn2-bg:#334155; --shadow:rgba(0,0,0,.3);
+  --on-accent:#04283a; --on-danger:#3a0404;
+}
+:root[data-theme="light"] {
+  --bg:#f1f5f9; --card:#ffffff; --muted:#64748b; --text:#0f172a;
+  --accent:#0284c7; --accent2:#059669; --border:#cbd5e1; --danger:#dc2626;
+  --th-bg:#f1f5f9; --input-bg:#ffffff; --btn2-bg:#e2e8f0; --shadow:rgba(2,8,23,.08);
+  --on-accent:#ffffff; --on-danger:#ffffff;
+}
 * { box-sizing: border-box; }
 body { margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-       background:var(--bg); color:var(--text); }
+       background:var(--bg); color:var(--text);
+       transition: background .2s ease, color .2s ease; }
 a { color:var(--accent); text-decoration:none; }
-header { display:flex; align-items:center; justify-content:space-between;
-         padding:16px 24px; background:var(--card); border-bottom:1px solid var(--border);
-         flex-wrap:wrap; gap:8px; }
-header .brand { font-weight:700; font-size:18px; }
-header nav a { margin-left:16px; color:var(--muted); }
-header nav a:hover { color:var(--text); }
-main { max-width:1150px; margin:0 auto; padding:24px; }
-h1 { font-size:22px; margin:0 0 4px; }
-h2 { font-size:16px; color:var(--muted); font-weight:600; margin:26px 0 12px; }
-.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; }
-.card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
-.card .num { font-size:28px; font-weight:700; }
+header { position:sticky; top:0; z-index:50; display:flex; align-items:center;
+         justify-content:space-between; padding:14px 24px; background:var(--card);
+         border-bottom:1px solid var(--border); flex-wrap:wrap; gap:8px;
+         box-shadow:0 1px 3px var(--shadow); }
+header .brand { font-weight:800; font-size:18px; letter-spacing:-.02em; }
+header nav a { margin-left:4px; color:var(--muted); padding:6px 11px; border-radius:9px;
+         font-size:14px; transition:background .15s ease, color .15s ease; }
+header nav a:hover { color:var(--text); background:var(--btn2-bg); }
+header nav a.active { color:var(--text); background:var(--btn2-bg); }
+main { max-width:1150px; margin:0 auto; padding:28px 24px; }
+h1 { font-size:24px; margin:0 0 6px; font-weight:800; letter-spacing:-.02em; }
+h2 { font-size:15px; color:var(--muted); font-weight:700; margin:28px 0 12px;
+     text-transform:uppercase; letter-spacing:.05em; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:16px; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:18px;
+        box-shadow:0 1px 3px var(--shadow); transition:transform .15s ease, box-shadow .15s ease; }
+.card:hover { transform:translateY(-2px); box-shadow:0 8px 24px var(--shadow); }
+.card .num { font-size:30px; font-weight:800; letter-spacing:-.02em; }
 .card .lbl { color:var(--muted); font-size:13px; margin-top:4px; }
 table { width:100%; border-collapse:collapse; background:var(--card);
-        border:1px solid var(--border); border-radius:12px; overflow:hidden; }
-th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
-th { color:var(--muted); font-weight:600; background:#172033; }
+        border:1px solid var(--border); border-radius:16px; overflow:hidden;
+        box-shadow:0 1px 3px var(--shadow); }
+th,td { text-align:left; padding:12px 14px; border-bottom:1px solid var(--border); font-size:14px; }
+th { color:var(--muted); font-weight:700; background:var(--th-bg);
+     text-transform:uppercase; font-size:11px; letter-spacing:.05em; }
 tr:last-child td { border-bottom:none; }
-.badge { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+tr:hover td { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+.badge { padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
 .badge.onsite { background:rgba(52,211,153,.15); color:var(--accent2); }
+.badge.ontime { background:rgba(52,211,153,.15); color:var(--accent2); }
 .badge.remote { background:rgba(56,189,248,.15); color:var(--accent); }
 .badge.admin { background:rgba(250,204,21,.15); color:#facc15; }
 .badge.user { background:rgba(148,163,184,.15); color:var(--muted); }
 .badge.late { background:rgba(248,113,113,.15); color:var(--danger); }
 form.filters { display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin-bottom:16px; }
 label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
-input,select,button,textarea { font:inherit; padding:8px 10px; border-radius:8px;
-        border:1px solid var(--border); background:#0b1220; color:var(--text); }
-button, .btn { background:var(--accent); color:#04283a; border:none; font-weight:700; cursor:pointer; }
-.btn { display:inline-block; padding:9px 14px; }
-.btn.secondary { background:#334155; color:var(--text); }
-.btn.danger { background:var(--danger); color:#3a0404; }
+input,select,button,textarea { font:inherit; padding:9px 11px; border-radius:10px;
+        border:1px solid var(--border); background:var(--input-bg); color:var(--text);
+        transition:border-color .15s ease, box-shadow .15s ease; }
+input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accent);
+        box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+button, .btn { background:var(--accent); color:var(--on-accent); border:none; font-weight:700;
+        cursor:pointer; box-shadow:0 1px 2px var(--shadow);
+        transition:filter .15s ease, transform .05s ease; }
+button:hover, .btn:hover { filter:brightness(1.08); }
+button:active, .btn:active { transform:translateY(1px); }
+.btn { display:inline-block; padding:10px 15px; }
+.btn.secondary { background:var(--btn2-bg); color:var(--text); }
+.btn.danger { background:var(--danger); color:var(--on-danger); }
 .chart { display:flex; align-items:flex-end; gap:6px; height:140px; padding:12px;
          background:var(--card); border:1px solid var(--border); border-radius:12px; }
 .bar { flex:1; background:linear-gradient(var(--accent),#0ea5e9); border-radius:4px 4px 0 0; min-height:2px; position:relative; }
@@ -135,7 +163,8 @@ button, .btn { background:var(--accent); color:#04283a; border:none; font-weight
 .err { color:var(--danger); font-size:14px; margin-bottom:10px; }
 .ok { background:rgba(52,211,153,.15); color:var(--accent2); padding:10px 12px; border-radius:8px; margin-bottom:16px; font-size:14px; }
 .banner-err { background:rgba(248,113,113,.15); color:var(--danger); padding:10px 12px; border-radius:8px; margin-bottom:16px; font-size:14px; }
-.panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:22px; }
+.panel { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:20px;
+        margin-bottom:22px; box-shadow:0 1px 3px var(--shadow); }
 .panel h2 { margin-top:0; }
 form.stack { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
 form.stack > div { flex:1; min-width:150px; }
@@ -147,19 +176,49 @@ form.stack input, form.stack select, form.stack textarea { width:100%; }
         color:var(--text); font-size:14px; }
 .checks input { width:auto; }
 #map { height:460px; border-radius:12px; border:1px solid var(--border); }
+.theme-toggle { margin-left:16px; background:transparent; border:1px solid var(--border);
+        color:var(--text); cursor:pointer; padding:6px 10px; border-radius:8px;
+        font-size:15px; line-height:1; }
+.theme-toggle:hover { border-color:var(--accent); }
+@media (max-width: 680px) {
+  header { flex-direction:column; align-items:stretch; padding:12px 16px; }
+  header nav { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; }
+  header nav a { margin-left:0; }
+  .theme-toggle { margin-left:auto; }
+  main { padding:16px; }
+  h1 { font-size:20px; }
+  /* Let wide tables scroll horizontally instead of squashing. */
+  table { display:block; overflow-x:auto; white-space:nowrap; }
+  form.stack > div { min-width:100%; }
+  .row2 > .panel { min-width:100%; }
+  .cards { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); }
+  #map { height:360px; }
+}
 """
+
+# Applies the saved theme before first paint (avoids a flash of the wrong theme)
+# and wires the toggle button.
+THEME_SCRIPT = (
+    "<script>(function(){try{var t=localStorage.getItem('theme')||'dark';"
+    "document.documentElement.setAttribute('data-theme',t);}catch(e){}})();"
+    "function toggleTheme(){var d=document.documentElement;"
+    "var t=d.getAttribute('data-theme')==='light'?'dark':'light';"
+    "d.setAttribute('data-theme',t);try{localStorage.setItem('theme',t);}catch(e){}"
+    "var b=document.getElementById('themeBtn');if(b)b.textContent=t==='light'?'\\u2600\\ufe0f':'\\ud83c\\udf19';}"
+    "</script>"
+)
 
 
 def layout(title: str, body: str, active: str = "", head_extra: str = "") -> bytes:
     def nav(label: str, href: str, key: str) -> str:
-        style = ' style="color:var(--text)"' if key == active else ""
-        return f'<a href="{href}"{style}>{label}</a>'
+        cls = ' class="active"' if key == active else ""
+        return f'<a href="{href}"{cls}>{label}</a>'
 
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_e(title)} - Attendance Admin</title>
-<style>{PAGE_CSS}</style>{head_extra}</head>
+<style>{PAGE_CSS}</style>{THEME_SCRIPT}{head_extra}</head>
 <body>
 <header>
   <div class="brand">📋 Attendance Admin</div>
@@ -171,9 +230,13 @@ def layout(title: str, body: str, active: str = "", head_extra: str = "") -> byt
     {nav("Map", "/map", "map")}
     {nav("Settings", "/settings", "set")}
     <a href="/logout">Log out</a>
+    <button id="themeBtn" class="theme-toggle" onclick="toggleTheme()"
+            aria-label="Toggle light or dark theme" title="Toggle light/dark">🌙</button>
   </nav>
 </header>
 <main>{body}</main>
+<script>(function(){{var t=document.documentElement.getAttribute('data-theme');
+var b=document.getElementById('themeBtn');if(b)b.textContent=t==='light'?'☀️':'🌙';}})();</script>
 </body></html>"""
     return page.encode("utf-8")
 
@@ -183,7 +246,7 @@ def login_page(error: str = "") -> bytes:
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Login - Attendance Admin</title><style>{PAGE_CSS}</style></head>
+<title>Login - Attendance Admin</title><style>{PAGE_CSS}</style>{THEME_SCRIPT}</head>
 <body><div class="login-wrap"><div class="card">
 <h1>📋 Attendance Admin</h1>
 <p class="muted">Enter the admin password to continue.</p>
@@ -192,7 +255,14 @@ def login_page(error: str = "") -> bytes:
   <input type="password" name="password" placeholder="Admin password" autofocus>
   <button type="submit">Log in</button>
 </form>
-</div></div></body></html>"""
+<p style="text-align:center;margin:14px 0 0">
+  <button id="themeBtn" class="theme-toggle" style="margin:0" onclick="toggleTheme()"
+          aria-label="Toggle light or dark theme">🌙</button>
+</p>
+</div></div>
+<script>(function(){{var t=document.documentElement.getAttribute('data-theme');
+var b=document.getElementById('themeBtn');if(b)b.textContent=t==='light'?'☀️':'🌙';}})();</script>
+</body></html>"""
     return page.encode("utf-8")
 
 
@@ -509,7 +579,8 @@ class _PortalHandler(BaseHTTPRequestHandler):
         return f'<div class="chart">{bars}</div>'
 
     def _entry_row(self, e, editable=False) -> str:
-        late = '<span class="badge late">Late</span>' if e.is_late else "&mdash;"
+        late = ('<span class="badge late">Late</span>' if e.is_late
+                else '<span class="badge ontime">On time</span>')
         edit = (f'<td class="actions"><a href="/entry?id={e.id}">Edit</a></td>'
                 if editable else "")
         return (

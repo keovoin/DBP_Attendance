@@ -26,7 +26,8 @@ Admins get an optional **web dashboard** in the browser.
   (default 23:59).
 - **Multiple sites** — configure several on-site locations; members are
   validated against their assigned base site.
-- **CSV + Excel export** and an **admin web dashboard** with analytics and a map.
+- **CSV + Excel export** and a modern, **mobile-responsive admin web dashboard**
+  with **light/dark themes**, analytics and a map.
 
 ## Getting started
 

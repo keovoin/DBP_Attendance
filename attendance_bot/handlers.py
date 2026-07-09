@@ -563,7 +563,7 @@ class AttendanceBot:
             f"\u2705 Clocked in (Remote) at {now}.\n"
             f"Coordinator: {member.coordinator}"
         )
-        self._send(chat_id, msg + self._late_suffix(user_id, entry.id, late))
+        self._send(chat_id, msg + self._status_suffix(user_id, entry.id, late))
 
     def _member_sites(self, member: Member) -> list[Site]:
         """Sites this member's On_Site clock-in is validated against."""
@@ -650,22 +650,26 @@ class AttendanceBot:
             f"Coordinator: {member.coordinator}"
         )
         self.client.send_message(
-            chat_id, msg + self._late_suffix(user_id, entry.id, late),
+            chat_id, msg + self._status_suffix(user_id, entry.id, late),
             reply_markup=remove_keyboard(),
         )
 
-    def _late_suffix(self, user_id: int, entry_id: int, late: bool) -> str:
-        """If late, set the remark-capture state and return an inline note."""
-        if not late:
-            return ""
+    def _status_suffix(self, user_id: int, entry_id: int, late: bool) -> str:
+        """Append a status note; if late, also start the remark capture flow."""
         sched = self.db.get_work_schedule()
-        self.states[user_id] = ConversationState(
-            STATE_AWAITING_LATE_REMARK, {"entry_id": entry_id}
-        )
-        return (
-            f"\n\n\u26A0\uFE0F You clocked in after {sched.start} and are marked "
-            "late. Please reply with a short reason for your late arrival."
-        )
+        if late:
+            self.states[user_id] = ConversationState(
+                STATE_AWAITING_LATE_REMARK, {"entry_id": entry_id}
+            )
+            return (
+                f"\n\n\u26A0\uFE0F You clocked in after {sched.start} and are marked "
+                "late. Please reply with a short reason for your late arrival."
+            )
+        # On time (only worth saying on a working day).
+        today = timeutil.today_iso(self.tz)
+        if timeutil.is_workday(today, sched.days):
+            return "\n\U0001F7E2 On time - thank you!"
+        return ""
 
     def _complete_late_remark(
         self, chat_id: int, user_id: int, text: str, state: ConversationState
