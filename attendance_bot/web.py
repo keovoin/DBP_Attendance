@@ -464,6 +464,8 @@ class _PortalHandler(BaseHTTPRequestHandler):
             "/members/bulk": self._bulk_add_members,
             "/units/add": self._add_unit,
             "/units/delete": self._delete_unit,
+            "/holidays/add": self._add_holiday,
+            "/holidays/delete": self._delete_holiday,
         }
         action = actions.get(path)
         if action is None:
@@ -829,7 +831,9 @@ class _PortalHandler(BaseHTTPRequestHandler):
         end_v = end if timeutil.is_valid_date(end) else default_end
 
         sched = self.db.get_work_schedule()
-        workdays = timeutil.count_workdays(start_v, end_v, sched.days)
+        workdays = timeutil.effective_workdays(
+            start_v, end_v, sched.days, self.db.holiday_dates()
+        )
         entries = self.db.query_attendance(None, start_v, end_v)
         members = {m.telegram_id: m for m in self.db.list_members()}
 
@@ -979,6 +983,19 @@ class _PortalHandler(BaseHTTPRequestHandler):
 
         unit_rows = _named_rows(self.db.list_units(), "units")
 
+        holiday_rows = ""
+        for h in self.db.list_holidays():
+            holiday_rows += (
+                f"<tr><td>{_e(h.date)}</td><td>{_e(h.name)}</td>"
+                f"<td class='actions'>"
+                f"<form method='post' action='/holidays/delete' style='display:inline'"
+                f" onsubmit=\"return confirm('Delete holiday {_attr(h.date)}?')\">"
+                f"<input type='hidden' name='date' value='{_attr(h.date)}'>"
+                f"<button class='btn danger' type='submit'>Delete</button></form></td></tr>"
+            )
+        holiday_rows = holiday_rows or \
+            '<tr><td colspan="3" class="muted">No holidays configured.</td></tr>'
+
         sched = self.db.get_work_schedule()
         day_checks = ""
         for i, name in enumerate(timeutil.WEEKDAY_NAMES):
@@ -1067,6 +1084,18 @@ class _PortalHandler(BaseHTTPRequestHandler):
           </form>
           <table class="small" style="margin-top:12px"><tr><th>Name</th><th></th></tr>
           {unit_rows}</table>
+        </div>
+        <div class="panel">
+          <h2>Public holidays</h2>
+          <p class="muted">On these dates nobody is marked late/absent, clock-in
+          reminders are paused, and members get a holiday notice instead.</p>
+          <form class="stack" method="post" action="/holidays/add">
+            <div><label>Date</label><input type="date" name="date"></div>
+            <div><label>Name</label><input name="name" placeholder="e.g. Khmer New Year"></div>
+            <div><button type="submit">Add holiday</button></div>
+          </form>
+          <table class="small" style="margin-top:12px">
+          <tr><th>Date</th><th>Name</th><th></th></tr>{holiday_rows}</table>
         </div>
         <div class="panel">
           <h2>Recent changes (audit log)</h2>
@@ -1294,6 +1323,28 @@ class _PortalHandler(BaseHTTPRequestHandler):
         self.db.delete_unit(uid)
         self._audit("unit.delete", item.name)
         self._flash_redirect("/settings", ok=f"Unit '{item.name}' deleted.")
+
+    def _add_holiday(self, form) -> None:
+        date = form.get("date", "").strip()
+        name = form.get("name", "").strip()
+        if not timeutil.is_valid_date(date):
+            self._flash_redirect("/settings", err="Please provide a valid date.")
+            return
+        if not name:
+            self._flash_redirect("/settings", err="Please name the holiday.")
+            return
+        self.db.add_holiday(date, name)
+        self._audit("holiday.add", f"{date} {name}")
+        self._flash_redirect("/settings", ok=f"Holiday added: {date} - {name}.")
+
+    def _delete_holiday(self, form) -> None:
+        date = form.get("date", "").strip()
+        if not self.db.is_holiday(date):
+            self._flash_redirect("/settings", err="Holiday not found.")
+            return
+        self.db.delete_holiday(date)
+        self._audit("holiday.delete", date)
+        self._flash_redirect("/settings", ok=f"Holiday {date} deleted.")
 
     def _set_location(self, form) -> None:
         try:

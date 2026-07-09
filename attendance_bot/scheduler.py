@@ -23,6 +23,7 @@ from .config import Config
 from .db import (
     CFG_LAST_AUTO_CLOCKOUT,
     CFG_LAST_EVENING,
+    CFG_LAST_HOLIDAY_NOTICE,
     CFG_LAST_MORNING,
     Database,
 )
@@ -67,9 +68,25 @@ class ReminderScheduler:
         today = now.strftime(timeutil.DATE_FMT)
         now_hhmm = now.strftime("%H:%M")
         is_workday = now.weekday() in sched.days
+        holiday_name = db.get_holiday_name(today)
 
-        # Reminders only run on working days when enabled.
-        if sched.reminders_enabled and is_workday:
+        # On a public holiday, don't nag people to clock in - send a one-time
+        # holiday greeting instead.
+        if (
+            sched.reminders_enabled and is_workday and holiday_name
+            and now_hhmm >= sched.start
+            and db.get_config(CFG_LAST_HOLIDAY_NOTICE) != today
+        ):
+            for m in db.list_members():
+                self._safe_send(
+                    m.telegram_id,
+                    f"\U0001F389 Today is a public holiday: {holiday_name}. "
+                    "Enjoy your day off - no need to clock in!",
+                )
+            db.set_config(CFG_LAST_HOLIDAY_NOTICE, today)
+
+        # Reminders only run on working days that are not holidays.
+        if sched.reminders_enabled and is_workday and not holiday_name:
             members = db.list_members()
             if now_hhmm >= sched.start and db.get_config(CFG_LAST_MORNING) != today:
                 for m in members:

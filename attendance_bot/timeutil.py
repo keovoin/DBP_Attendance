@@ -159,3 +159,22 @@ def count_workdays(start_date: str, end_date: str, work_days: set) -> int:
             count += 1
         cur += timedelta(days=1)
     return count
+
+
+def effective_workdays(
+    start_date: str, end_date: str, work_days: set, holidays: set
+) -> int:
+    """Working days in a range, excluding any that fall on a public holiday."""
+    try:
+        start = datetime.strptime(start_date, DATE_FMT)
+        end = datetime.strptime(end_date, DATE_FMT)
+    except (ValueError, TypeError):
+        return 0
+    count = 0
+    cur = start
+    while cur <= end:
+        iso = cur.strftime(DATE_FMT)
+        if cur.weekday() in work_days and iso not in holidays:
+            count += 1
+        cur += timedelta(days=1)
+    return count

@@ -36,6 +36,7 @@ CFG_GEOFENCE_RADIUS = "geofence_radius"  # meters (overrides env default)
 CFG_LAST_MORNING = "last_morning_reminder"
 CFG_LAST_EVENING = "last_evening_reminder"
 CFG_LAST_AUTO_CLOCKOUT = "last_auto_clockout"
+CFG_LAST_HOLIDAY_NOTICE = "last_holiday_notice"
 
 DEFAULT_WORK_START = "09:00"
 DEFAULT_WORK_END = "17:00"
@@ -87,6 +88,12 @@ class Site:
 class NamedItem:
     """A simple id/name lookup row (used for units and coordinators)."""
     id: int
+    name: str
+
+
+@dataclass
+class Holiday:
+    date: str   # YYYY-MM-DD
     name: str
 
 
@@ -184,6 +191,11 @@ class Database:
             CREATE TABLE IF NOT EXISTS coordinators (
                 id   INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE
+            );
+
+            CREATE TABLE IF NOT EXISTS holidays (
+                date TEXT PRIMARY KEY,
+                name TEXT NOT NULL
             );
             """
         )
@@ -634,6 +646,40 @@ class Database:
     def delete_coordinator(self, coord_id: int) -> None:
         self.conn.execute("DELETE FROM coordinators WHERE id = ?", (coord_id,))
         self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Public holidays
+    # ------------------------------------------------------------------ #
+    def add_holiday(self, date: str, name: str) -> None:
+        self.conn.execute(
+            "INSERT INTO holidays (date, name) VALUES (?, ?) "
+            "ON CONFLICT(date) DO UPDATE SET name = excluded.name",
+            (date, name),
+        )
+        self.conn.commit()
+
+    def list_holidays(self) -> list[Holiday]:
+        rows = self.conn.execute(
+            "SELECT * FROM holidays ORDER BY date ASC"
+        ).fetchall()
+        return [Holiday(r["date"], r["name"]) for r in rows]
+
+    def delete_holiday(self, date: str) -> None:
+        self.conn.execute("DELETE FROM holidays WHERE date = ?", (date,))
+        self.conn.commit()
+
+    def get_holiday_name(self, date: str) -> Optional[str]:
+        row = self.conn.execute(
+            "SELECT name FROM holidays WHERE date = ?", (date,)
+        ).fetchone()
+        return row["name"] if row else None
+
+    def is_holiday(self, date: str) -> bool:
+        return self.get_holiday_name(date) is not None
+
+    def holiday_dates(self) -> set:
+        rows = self.conn.execute("SELECT date FROM holidays").fetchall()
+        return {r["date"] for r in rows}
 
     # ------------------------------------------------------------------ #
     # Audit log

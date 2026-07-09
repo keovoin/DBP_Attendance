@@ -21,6 +21,9 @@ Admins get an optional **web dashboard** in the browser.
   fallback), so no free-typing is needed.
 - **Auto late-detection** — clock-ins after the work start time (plus a
   configurable grace period) are flagged and the member is prompted for a reason.
+- **Public-holiday calendar** — on configured holidays nobody is marked
+  late/absent, reminders pause, members get a holiday notice, and attendance %
+  excludes holidays.
 - **Daily reminders + auto clock-out** — morning "clock in" and evening "clock
   out" nudges, and anyone still clocked in is auto-closed at a configurable time
   (default 23:59).
@@ -80,6 +83,7 @@ The bot uses long polling, so no public URL or webhook is needed.
 | `/clockout` | Member | Close today's open clock-in. |
 | `/status` | Member | See if you're currently clocked in and for how long. |
 | `/summary [week\|month]` | Member | Your hours, days present, and late count. |
+| `/holidays` | Member | List upcoming public holidays. |
 | `/setname <name>` | Member | Update your real full name. |
 | `/setunit <unit>` | Member | Set your unit/department. |
 | `/setbase` | Member | Choose your base location (from configured sites). |

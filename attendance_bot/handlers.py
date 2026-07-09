@@ -43,6 +43,7 @@ HELP_TEXT = (
     "/clockout - Clock out for today\n"
     "/status - See if you are currently clocked in\n"
     "/summary [week|month] - Your hours and attendance summary\n"
+    "/holidays - List upcoming public holidays\n"
     "/setname <full name> - Update your real name\n"
     "/setunit <unit> - Set your unit/department\n"
     "/setbase - Choose your base location\n"
@@ -137,6 +138,7 @@ class AttendanceBot:
             "/clockout": lambda: self._cmd_clock_out(chat_id, user_id),
             "/status": lambda: self._cmd_status(chat_id, user_id),
             "/summary": lambda: self._cmd_summary(chat_id, user_id, arg_str),
+            "/holidays": lambda: self._cmd_holidays(chat_id, user_id),
             "/remark": lambda: self._cmd_remark(chat_id, user_id, arg_str),
             "/view": lambda: self._cmd_view(chat_id, user_id, arg_str),
             "/export": lambda: self._cmd_export(chat_id, user_id, arg_str),
@@ -453,7 +455,7 @@ class AttendanceBot:
         """True if a clock-in right now counts as late per the work schedule."""
         sched = self.db.get_work_schedule()
         today = timeutil.today_iso(self.tz)
-        if not timeutil.is_workday(today, sched.days):
+        if not timeutil.is_workday(today, sched.days) or self.db.is_holiday(today):
             return False
         return timeutil.is_after_with_grace(
             timeutil.now(self.tz), sched.start, sched.grace_minutes
@@ -642,6 +644,19 @@ class AttendanceBot:
             return
         self._send(chat_id, "\u26AA You have not clocked in today. Use /clockin.")
 
+    def _cmd_holidays(self, chat_id: int, user_id: int) -> None:
+        if self._require_member(chat_id, user_id) is None:
+            return
+        today = timeutil.today_iso(self.tz)
+        upcoming = [h for h in self.db.list_holidays() if h.date >= today]
+        if not upcoming:
+            self._send(chat_id, "No upcoming public holidays are configured.")
+            return
+        lines = ["\U0001F4C6 Upcoming public holidays:"]
+        for h in upcoming[:20]:
+            lines.append(f"  {h.date} - {h.name}")
+        self._send(chat_id, "\n".join(lines))
+
     def _cmd_summary(self, chat_id: int, user_id: int, arg_str: str) -> None:
         member = self._require_member(chat_id, user_id)
         if member is None:
@@ -667,7 +682,9 @@ class AttendanceBot:
         onsite = sum(1 for e in entries if e.clock_in_type == TYPE_ON_SITE)
         remote = sum(1 for e in entries if e.clock_in_type == TYPE_REMOTE)
         sched = self.db.get_work_schedule()
-        workdays = timeutil.count_workdays(start, end, sched.days)
+        workdays = timeutil.effective_workdays(
+            start, end, sched.days, self.db.holiday_dates()
+        )
 
         self._send(
             chat_id,
