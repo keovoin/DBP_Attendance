@@ -161,6 +161,23 @@ def count_workdays(start_date: str, end_date: str, work_days: set) -> int:
     return count
 
 
+def dates_in_range(start_date: str, end_date: str) -> list:
+    """Inclusive list of ISO dates from start to end (empty if end < start)."""
+    try:
+        start = datetime.strptime(start_date, DATE_FMT)
+        end = datetime.strptime(end_date, DATE_FMT)
+    except (ValueError, TypeError):
+        return []
+    if end < start:
+        return []
+    out = []
+    cur = start
+    while cur <= end:
+        out.append(cur.strftime(DATE_FMT))
+        cur += timedelta(days=1)
+    return out
+
+
 def effective_workdays(
     start_date: str, end_date: str, work_days: set, holidays: set
 ) -> int:

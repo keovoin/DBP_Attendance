@@ -1090,7 +1090,9 @@ class _PortalHandler(BaseHTTPRequestHandler):
           <p class="muted">On these dates nobody is marked late/absent, clock-in
           reminders are paused, and members get a holiday notice instead.</p>
           <form class="stack" method="post" action="/holidays/add">
-            <div><label>Date</label><input type="date" name="date"></div>
+            <div><label>From</label><input type="date" name="date"></div>
+            <div><label>To (optional, for multi-day)</label>
+              <input type="date" name="date_to"></div>
             <div><label>Name</label><input name="name" placeholder="e.g. Khmer New Year"></div>
             <div><button type="submit">Add holiday</button></div>
           </form>
@@ -1325,17 +1327,31 @@ class _PortalHandler(BaseHTTPRequestHandler):
         self._flash_redirect("/settings", ok=f"Unit '{item.name}' deleted.")
 
     def _add_holiday(self, form) -> None:
-        date = form.get("date", "").strip()
+        start = form.get("date", "").strip()
+        end = form.get("date_to", "").strip() or start
         name = form.get("name", "").strip()
-        if not timeutil.is_valid_date(date):
-            self._flash_redirect("/settings", err="Please provide a valid date.")
+        if not timeutil.is_valid_date(start) or not timeutil.is_valid_date(end):
+            self._flash_redirect("/settings", err="Please provide valid date(s).")
             return
         if not name:
             self._flash_redirect("/settings", err="Please name the holiday.")
             return
-        self.db.add_holiday(date, name)
-        self._audit("holiday.add", f"{date} {name}")
-        self._flash_redirect("/settings", ok=f"Holiday added: {date} - {name}.")
+        dates = timeutil.dates_in_range(start, end)
+        if not dates:
+            self._flash_redirect(
+                "/settings", err="The 'To' date must be on or after the 'From' date."
+            )
+            return
+        if len(dates) > 366:
+            self._flash_redirect("/settings", err="Holiday range is too long.")
+            return
+        for d in dates:
+            self.db.add_holiday(d, name)
+        span = start if len(dates) == 1 else f"{start} to {end}"
+        self._audit("holiday.add", f"{span} {name} ({len(dates)} day(s))")
+        self._flash_redirect(
+            "/settings", ok=f"Added {len(dates)} holiday day(s): {name} ({span})."
+        )
 
     def _delete_holiday(self, form) -> None:
         date = form.get("date", "").strip()
