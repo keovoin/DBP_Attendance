@@ -44,6 +44,7 @@ HELP_TEXT = (
     "/status - See if you are currently clocked in\n"
     "/summary [week|month] - Your hours and attendance summary\n"
     "/holidays - List upcoming public holidays\n"
+    "/announcement - Show the latest announcement\n"
     "/setname <full name> - Update your real name\n"
     "/setunit <unit> - Set your unit/department\n"
     "/setbase - Choose your base location\n"
@@ -139,6 +140,8 @@ class AttendanceBot:
             "/status": lambda: self._cmd_status(chat_id, user_id),
             "/summary": lambda: self._cmd_summary(chat_id, user_id, arg_str),
             "/holidays": lambda: self._cmd_holidays(chat_id, user_id),
+            "/announcement": lambda: self._cmd_announcement(chat_id, user_id),
+            "/announcements": lambda: self._cmd_announcement(chat_id, user_id),
             "/remark": lambda: self._cmd_remark(chat_id, user_id, arg_str),
             "/view": lambda: self._cmd_view(chat_id, user_id, arg_str),
             "/export": lambda: self._cmd_export(chat_id, user_id, arg_str),
@@ -643,6 +646,15 @@ class AttendanceBot:
             )
             return
         self._send(chat_id, "\u26AA You have not clocked in today. Use /clockin.")
+
+    def _cmd_announcement(self, chat_id: int, user_id: int) -> None:
+        if self._require_member(chat_id, user_id) is None:
+            return
+        ann = self.db.latest_announcement()
+        if ann is None:
+            self._send(chat_id, "There are no announcements yet.")
+            return
+        self._send(chat_id, f"\U0001F4E2 Announcement ({ann.at})\n\n{ann.text}")
 
     def _cmd_holidays(self, chat_id: int, user_id: int) -> None:
         if self._require_member(chat_id, user_id) is None:

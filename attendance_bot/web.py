@@ -228,6 +228,7 @@ def layout(title: str, body: str, active: str = "", head_extra: str = "") -> byt
     {nav("Members", "/members", "mem")}
     {nav("Analytics", "/analytics", "analytics")}
     {nav("Map", "/map", "map")}
+    {nav("Announce", "/announce", "announce")}
     {nav("Settings", "/settings", "set")}
     <a href="/logout">Log out</a>
     <button id="themeBtn" class="theme-toggle" onclick="toggleTheme()"
@@ -279,6 +280,10 @@ class _PortalHandler(BaseHTTPRequestHandler):
     @property
     def db(self) -> Database:
         return self.server.ctx_db  # type: ignore[attr-defined]
+
+    @property
+    def client(self):
+        return getattr(self.server, "ctx_client", None)
 
     def log_message(self, *args, **kwargs) -> None:
         return
@@ -424,6 +429,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             "/entry": lambda: self._entry_edit_page(params),
             "/analytics": lambda: self._analytics_page(params),
             "/map": lambda: self._map_page(params),
+            "/announce": lambda: self._announce_page(params),
             "/settings": lambda: self._settings_page(params),
         }
         if path == "/export.csv":
@@ -466,6 +472,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             "/units/delete": self._delete_unit,
             "/holidays/add": self._add_holiday,
             "/holidays/delete": self._delete_holiday,
+            "/announce/send": self._send_announcement,
         }
         action = actions.get(path)
         if action is None:
@@ -724,6 +731,67 @@ class _PortalHandler(BaseHTTPRequestHandler):
         </form>
         """
         return layout("Edit entry", body, active="att")
+
+    # ================================================================== #
+    # Announcements (broadcast to all members)
+    # ================================================================== #
+    def _announce_page(self, params) -> bytes:
+        member_count = len(self.db.list_members())
+        history = ""
+        for a in self.db.list_announcements(limit=15):
+            history += (
+                f"<tr><td class='muted'>{_e(a.at)}</td>"
+                f"<td>{_e(a.text)}</td>"
+                f"<td class='muted'>{a.sent_count}</td></tr>"
+            )
+        history = history or \
+            '<tr><td colspan="3" class="muted">No announcements sent yet.</td></tr>'
+        body = f"""
+        <h1>Announcements</h1>
+        {self._flash(params)}
+        <div class="panel">
+          <h2>Send an announcement</h2>
+          <p class="muted">This is delivered to all {member_count} registered
+          member(s) in Telegram right now.</p>
+          <form method="post" action="/announce/send"
+                onsubmit="return confirm('Send this announcement to all members?')">
+            <textarea name="text" rows="4" style="width:100%"
+              placeholder="e.g. Reminder: month-end closing is this Friday. Please clock in on time."></textarea>
+            <div style="margin-top:12px"><button type="submit">Send to all members</button></div>
+          </form>
+        </div>
+        <div class="panel">
+          <h2>Recent announcements</h2>
+          <table class="small"><tr><th>When</th><th>Message</th><th>Sent to</th></tr>
+          {history}</table>
+        </div>
+        """
+        return layout("Announce", body, active="announce")
+
+    def _send_announcement(self, form) -> None:
+        text = form.get("text", "").strip()
+        if not text:
+            self._flash_redirect("/announce", err="Please write an announcement.")
+            return
+        client = self.client
+        if client is None:
+            self._flash_redirect(
+                "/announce", err="Messaging is unavailable (bot client not running)."
+            )
+            return
+        message = f"\U0001F4E2 Announcement\n\n{text}"
+        sent = 0
+        for m in self.db.list_members():
+            try:
+                client.send_message(m.telegram_id, message)
+                sent += 1
+            except Exception:
+                pass  # skip members who have blocked the bot, etc.
+        self.db.add_announcement(
+            timeutil.now_iso(self.config.tz_offset_hours), text, sent
+        )
+        self._audit("announcement.send", f"{sent} recipient(s)")
+        self._flash_redirect("/announce", ok=f"Announcement sent to {sent} member(s).")
 
     # ================================================================== #
     # Members (list / add / edit / delete)
@@ -1491,15 +1559,17 @@ class _PortalHandler(BaseHTTPRequestHandler):
 # --------------------------------------------------------------------- #
 # Server bootstrap
 # --------------------------------------------------------------------- #
-def start_web_portal(config: Config) -> ThreadingHTTPServer:
+def start_web_portal(config: Config, client=None) -> ThreadingHTTPServer:
     """Start the admin portal in a daemon thread; returns the server.
 
     The portal uses its own database connection (a separate Database instance
     on the same file) so it never contends with the bot thread's connection.
+    ``client`` is the Telegram client used to broadcast announcements.
     """
     server = ThreadingHTTPServer(("0.0.0.0", config.health_port), _PortalHandler)
     server.ctx_config = config  # type: ignore[attr-defined]
     server.ctx_db = Database(config.db_path)  # type: ignore[attr-defined]
+    server.ctx_client = client  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, name="web-portal", daemon=True)
     thread.start()
     logger.info("Admin web portal listening on 0.0.0.0:%d", config.health_port)

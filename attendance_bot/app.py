@@ -32,7 +32,7 @@ def run() -> None:
     # otherwise run only a minimal health endpoint.
     try:
         if config.admin_portal_password:
-            start_web_portal(config)
+            start_web_portal(config, client)
         else:
             logger.info(
                 "ADMIN_PORTAL_PASSWORD not set - starting health endpoint only "

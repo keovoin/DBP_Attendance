@@ -84,6 +84,7 @@ The bot uses long polling, so no public URL or webhook is needed.
 | `/status` | Member | See if you're currently clocked in and for how long. |
 | `/summary [week\|month]` | Member | Your hours, days present, and late count. |
 | `/holidays` | Member | List upcoming public holidays. |
+| `/announcement` | Member | Show the latest admin announcement. |
 | `/setname <name>` | Member | Update your real full name. |
 | `/setunit <unit>` | Member | Set your unit/department. |
 | `/setbase` | Member | Choose your base location (from configured sites). |
@@ -127,6 +128,8 @@ log in with that password, and you get:
   remote, and attendance rate over a chosen date range.
 - **Map** — plots configured sites and on-site clock-in points (Leaflet); click
   the map to grab coordinates and add a new site.
+- **Announce** — compose a custom announcement and broadcast it to all members
+  in Telegram; a history of sent announcements is kept.
 - **Settings** — the default on-site location, the **geofence radius**,
   **multiple named sites**, a master list of **units/departments** (which
   members select during registration), the **work schedule** (start/end times,

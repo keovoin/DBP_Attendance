@@ -98,6 +98,14 @@ class Holiday:
 
 
 @dataclass
+class Announcement:
+    id: int
+    at: str
+    text: str
+    sent_count: int = 0
+
+
+@dataclass
 class WorkSchedule:
     start: str = DEFAULT_WORK_START
     end: str = DEFAULT_WORK_END
@@ -196,6 +204,13 @@ class Database:
             CREATE TABLE IF NOT EXISTS holidays (
                 date TEXT PRIMARY KEY,
                 name TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS announcements (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                at         TEXT NOT NULL,
+                text       TEXT NOT NULL,
+                sent_count INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -680,6 +695,34 @@ class Database:
     def holiday_dates(self) -> set:
         rows = self.conn.execute("SELECT date FROM holidays").fetchall()
         return {r["date"] for r in rows}
+
+    # ------------------------------------------------------------------ #
+    # Announcements
+    # ------------------------------------------------------------------ #
+    def add_announcement(self, at: str, text: str, sent_count: int) -> Announcement:
+        cur = self.conn.execute(
+            "INSERT INTO announcements (at, text, sent_count) VALUES (?, ?, ?)",
+            (at, text, int(sent_count)),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM announcements WHERE id = ?", (int(cur.lastrowid),)
+        ).fetchone()
+        return Announcement(row["id"], row["at"], row["text"], row["sent_count"])
+
+    def list_announcements(self, limit: int = 20) -> list[Announcement]:
+        rows = self.conn.execute(
+            "SELECT * FROM announcements ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [Announcement(r["id"], r["at"], r["text"], r["sent_count"]) for r in rows]
+
+    def latest_announcement(self) -> Optional[Announcement]:
+        row = self.conn.execute(
+            "SELECT * FROM announcements ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return Announcement(row["id"], row["at"], row["text"], row["sent_count"])
 
     # ------------------------------------------------------------------ #
     # Audit log
