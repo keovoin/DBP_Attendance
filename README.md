@@ -17,8 +17,8 @@ Admins get an optional **web dashboard** in the browser.
 - **Geofenced on-site clock-in** using the haversine distance formula.
 - **Role-based access control** with an easy first-admin bootstrap.
 - **Guided registration** — new members set their real name, then **select**
-  their coordinator, unit/department and base location from admin-managed lists
-  (with a typed fallback), so no free-typing is needed.
+  their unit/department and base location from admin-managed lists (with a typed
+  fallback), so no free-typing is needed.
 - **Auto late-detection** — clock-ins after the work start time (plus a
   configurable grace period) are flagged and the member is prompted for a reason.
 - **Daily reminders + auto clock-out** — morning "clock in" and evening "clock
@@ -75,13 +75,12 @@ The bot uses long polling, so no public URL or webhook is needed.
 
 | Command | Who | Description |
 | --- | --- | --- |
-| `/register` (or `/start`) | Everyone | Guided setup: real name, coordinator, unit, base location. |
+| `/register` (or `/start`) | Everyone | Guided setup: real name, unit, base location. |
 | `/clockin` | Member | Clock in; choose **Remote** or **On_Site**. |
 | `/clockout` | Member | Close today's open clock-in. |
 | `/status` | Member | See if you're currently clocked in and for how long. |
 | `/summary [week\|month]` | Member | Your hours, days present, and late count. |
 | `/setname <name>` | Member | Update your real full name. |
-| `/setcoordinator <name>` | Member | Set or change your coordinator. |
 | `/setunit <unit>` | Member | Set your unit/department. |
 | `/setbase` | Member | Choose your base location (from configured sites). |
 | `/remark <YYYY-MM-DD> <text>` | Member | Add/replace a late remark for a date. |
@@ -118,17 +117,17 @@ log in with that password, and you get:
   **arrival/clock-in time, out time, on-time/late status, and GPS coordinates**;
   export to **CSV or Excel (.xlsx)**.
 - **Members** — add, **edit, and delete** members (unit/department, base site,
-  role, coordinator) and **bulk-import** many members by **uploading an Excel
-  (.xlsx) or CSV file** (or pasting rows); a template is downloadable.
+  role) and **bulk-import** many members by **uploading an Excel (.xlsx) or CSV
+  file** (or pasting rows); a template is downloadable.
 - **Analytics** — per-member hours worked, days present, late count, on-site vs
   remote, and attendance rate over a chosen date range.
 - **Map** — plots configured sites and on-site clock-in points (Leaflet); click
   the map to grab coordinates and add a new site.
 - **Settings** — the default on-site location, the **geofence radius**,
-  **multiple named sites**, master lists of **units/departments** and
-  **coordinators** (which members select during registration), the **work
-  schedule** (start/end times, working days, **late grace period**, reminders
-  on/off, **auto clock-out time**), a **"recalculate late flags"** action, and
+  **multiple named sites**, a master list of **units/departments** (which
+  members select during registration), the **work schedule** (start/end times,
+  working days, **late grace period**, reminders on/off, **auto clock-out
+  time**), a **"recalculate late flags"** action, and
   an **audit log** of admin changes.
 
 The dashboard is protected by a signed `HttpOnly` session cookie, and shares the

@@ -449,7 +449,7 @@ class Database:
             SELECT a.*, m.name AS member_name
             FROM attendance a JOIN members m ON m.telegram_id = a.telegram_id
             {where}
-            ORDER BY m.name COLLATE NOCASE ASC, a.date ASC, a.id ASC
+            ORDER BY a.date ASC, m.name COLLATE NOCASE ASC, a.id ASC
             """,
             params,
         ).fetchall()

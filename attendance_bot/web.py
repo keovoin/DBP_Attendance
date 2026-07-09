@@ -464,8 +464,6 @@ class _PortalHandler(BaseHTTPRequestHandler):
             "/members/bulk": self._bulk_add_members,
             "/units/add": self._add_unit,
             "/units/delete": self._delete_unit,
-            "/coordinators/add": self._add_coordinator,
-            "/coordinators/delete": self._delete_coordinator,
         }
         action = actions.get(path)
         if action is None:
@@ -505,10 +503,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
     def _named_datalists(self) -> str:
         units = "".join(f'<option value="{_attr(u.name)}">'
                         for u in self.db.list_units())
-        coords = "".join(f'<option value="{_attr(c.name)}">'
-                         for c in self.db.list_coordinators())
-        return (f'<datalist id="unitlist">{units}</datalist>'
-                f'<datalist id="coordlist">{coords}</datalist>')
+        return f'<datalist id="unitlist">{units}</datalist>'
 
     def _site_name(self, site_id) -> str:
         if not site_id:
@@ -548,7 +543,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         )
         recent = sorted(entries, key=lambda e: (e.date, e.id), reverse=True)[:10]
         rows = "".join(self._entry_row(e) for e in recent) or \
-            '<tr><td colspan="8" class="muted">No attendance yet.</td></tr>'
+            '<tr><td colspan="7" class="muted">No attendance yet.</td></tr>'
         body = f"""
         <h1>Dashboard</h1>
         <p class="muted">As of {_e(today)} (UTC{tz:+g}).</p>
@@ -557,7 +552,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         {self._recent_chart(entries, tz)}
         <h2>Recent activity</h2>
         <table><tr><th>Date</th><th>Member</th><th>In</th><th>Out</th>
-        <th>Type</th><th>Coordinator</th><th>Location</th><th>Late</th></tr>{rows}</table>
+        <th>Type</th><th>Location</th><th>Late</th></tr>{rows}</table>
         """
         return layout("Dashboard", body, active="dash")
 
@@ -587,7 +582,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             f"<tr><td>{_e(e.date)}</td><td>{_e(e.member_name)}</td>"
             f"<td>{_e(e.clock_in_time)}</td><td>{_e(e.clock_out_time)}</td>"
             f"<td>{self._type_badge(e.clock_in_type)}</td>"
-            f"<td>{_e(e.coordinator)}</td>{self._loc_cell(e)}"
+            f"{self._loc_cell(e)}"
             f"<td>{late}</td>{edit}</tr>"
         )
 
@@ -650,7 +645,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             sel = " selected" if str(m.telegram_id) == member_param else ""
             options.append(f'<option value="{m.telegram_id}"{sel}>{_e(m.name)}</option>')
         rows = "".join(self._entry_row(e, editable=True) for e in entries) or \
-            '<tr><td colspan="9" class="muted">No records.</td></tr>'
+            '<tr><td colspan="8" class="muted">No records.</td></tr>'
         qs = urllib.parse.urlencode({"member": member_param, "from": start, "to": end})
         body = f"""
         <h1>Attendance</h1>
@@ -666,7 +661,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         </form>
         <p class="muted">{len(entries)} record(s).</p>
         <table><tr><th>Date</th><th>Member</th><th>In</th><th>Out</th><th>Type</th>
-        <th>Coordinator</th><th>Location</th><th>Late</th><th></th></tr>{rows}</table>
+        <th>Location</th><th>Late</th><th></th></tr>{rows}</table>
         """
         return layout("Attendance", body, active="att")
 
@@ -710,8 +705,6 @@ class _PortalHandler(BaseHTTPRequestHandler):
               <option value="Remote"{opt(TYPE_REMOTE)}>Remote</option>
               <option value="On_Site"{opt(TYPE_ON_SITE)}>On_Site</option>
             </select></div>
-            <div><label>Coordinator</label>
-              <input name="coordinator" value="{_attr(e.coordinator)}"></div>
             <div><label>Latitude{maplink}</label>
               <input name="latitude" value="{_attr(e.latitude)}"></div>
             <div><label>Longitude</label>
@@ -741,11 +734,11 @@ class _PortalHandler(BaseHTTPRequestHandler):
                      else '<span class="badge user">Regular</span>')
             rows += (
                 f"<tr><td>{_e(m.name)}</td><td>{badge}</td><td>{_e(m.unit)}</td>"
-                f"<td>{self._site_name(m.base_site_id)}</td><td>{_e(m.coordinator)}</td>"
+                f"<td>{self._site_name(m.base_site_id)}</td>"
                 f"<td class='muted'>{_e(m.telegram_id)}</td>"
                 f"<td class='actions'><a href='/member?id={m.telegram_id}'>Edit</a></td></tr>"
             )
-        rows = rows or '<tr><td colspan="7" class="muted">No members yet.</td></tr>'
+        rows = rows or '<tr><td colspan="6" class="muted">No members yet.</td></tr>'
         body = f"""
         <h1>Members</h1>
         {self._flash(params)}
@@ -759,7 +752,6 @@ class _PortalHandler(BaseHTTPRequestHandler):
             <div><label>Role</label><select name="role">
               <option value="regular">Regular</option><option value="admin">Admin</option>
             </select></div>
-            <div><label>Coordinator</label><input name="coordinator" list="coordlist" placeholder="Optional"></div>
             <div><button type="submit">Add</button></div>
           </form>
           <p class="muted" style="margin-bottom:0">Telegram ID must be the person's
@@ -767,7 +759,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         </div>
         <div class="panel">
           <h2>Bulk add members</h2>
-          <p class="muted">Columns: <code>telegram_id, name, unit, coordinator, role</code>.
+          <p class="muted">Columns: <code>telegram_id, name, unit, role</code>.
           Only ID and name are required; role is <code>regular</code> or
           <code>admin</code> (default regular). A header row is ignored.</p>
           <form method="post" action="/members/bulk" enctype="multipart/form-data">
@@ -776,13 +768,13 @@ class _PortalHandler(BaseHTTPRequestHandler):
             <input type="file" name="file" accept=".xlsx,.csv">
             <p class="muted" style="margin:14px 0 4px">...and / or paste rows here:</p>
             <textarea name="bulk" rows="5" style="width:100%"
-              placeholder="123456789, Sok Dara, Engineering, Sophea, regular
-987654321, Chan Nary, Operations, Vuthy, admin"></textarea>
+              placeholder="123456789, Sok Dara, Engineering, regular
+987654321, Chan Nary, Operations, admin"></textarea>
             <div style="margin-top:12px"><button type="submit">Import members</button></div>
           </form>
         </div>
         <table><tr><th>Name</th><th>Role</th><th>Unit</th><th>Base site</th>
-        <th>Coordinator</th><th>Telegram ID</th><th></th></tr>{rows}</table>
+        <th>Telegram ID</th><th></th></tr>{rows}</table>
         {self._named_datalists()}
         """
         return layout("Members", body, active="mem")
@@ -812,7 +804,6 @@ class _PortalHandler(BaseHTTPRequestHandler):
               <option value="regular"{role_reg}>Regular</option>
               <option value="admin"{role_admin}>Admin</option>
             </select></div>
-            <div><label>Coordinator</label><input name="coordinator" list="coordlist" value="{_attr(m.coordinator)}"></div>
             <div><button type="submit">Save</button>
               <a class="btn secondary" href="/members">Cancel</a></div>
           </form>
@@ -987,7 +978,6 @@ class _PortalHandler(BaseHTTPRequestHandler):
             return out or '<tr><td colspan="2" class="muted">None yet.</td></tr>'
 
         unit_rows = _named_rows(self.db.list_units(), "units")
-        coord_rows = _named_rows(self.db.list_coordinators(), "coordinators")
 
         sched = self.db.get_work_schedule()
         day_checks = ""
@@ -1068,27 +1058,15 @@ class _PortalHandler(BaseHTTPRequestHandler):
           <p class="muted" style="margin-bottom:0">Add sites on the
           <a href="/map">Map</a> page (click the map to grab coordinates).</p>
         </div>
-        <div class="row2">
-          <div class="panel">
-            <h2>Units / departments</h2>
-            <p class="muted">Members select from this list when registering.</p>
-            <form class="stack" method="post" action="/units/add">
-              <div><label>Unit name</label><input name="name" placeholder="e.g. Operations"></div>
-              <div><button type="submit">Add unit</button></div>
-            </form>
-            <table class="small" style="margin-top:12px"><tr><th>Name</th><th></th></tr>
-            {unit_rows}</table>
-          </div>
-          <div class="panel">
-            <h2>Coordinators</h2>
-            <p class="muted">Members select from this list when registering.</p>
-            <form class="stack" method="post" action="/coordinators/add">
-              <div><label>Coordinator name</label><input name="name" placeholder="e.g. Sophea"></div>
-              <div><button type="submit">Add coordinator</button></div>
-            </form>
-            <table class="small" style="margin-top:12px"><tr><th>Name</th><th></th></tr>
-            {coord_rows}</table>
-          </div>
+        <div class="panel">
+          <h2>Units / departments</h2>
+          <p class="muted">Members select from this list when registering.</p>
+          <form class="stack" method="post" action="/units/add">
+            <div><label>Unit name</label><input name="name" placeholder="e.g. Operations"></div>
+            <div><button type="submit">Add unit</button></div>
+          </form>
+          <table class="small" style="margin-top:12px"><tr><th>Name</th><th></th></tr>
+          {unit_rows}</table>
         </div>
         <div class="panel">
           <h2>Recent changes (audit log)</h2>
@@ -1105,7 +1083,6 @@ class _PortalHandler(BaseHTTPRequestHandler):
         tid = form.get("telegram_id", "").strip()
         name = form.get("name", "").strip()
         role = form.get("role", ROLE_REGULAR).strip()
-        coordinator = form.get("coordinator", "").strip() or None
         unit = form.get("unit", "").strip() or None
         base = self._parse_site_id(form.get("base_site_id"))
         if not tid.lstrip("-").isdigit() or not name:
@@ -1117,7 +1094,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         if self.db.get_member(tid_int) is not None:
             self._flash_redirect("/members", err="A member with that Telegram ID exists.")
             return
-        self.db.create_member(tid_int, name, role, coordinator,
+        self.db.create_member(tid_int, name, role, None,
                               timeutil.now_iso(self.config.tz_offset_hours), unit, base)
         self._audit("member.add", f"{name} ({tid_int})")
         self._flash_redirect("/members", ok=f"Added member: {name}.")
@@ -1125,9 +1102,8 @@ class _PortalHandler(BaseHTTPRequestHandler):
     def _bulk_add_members(self, form) -> None:
         """Bulk-create members from pasted text and/or an uploaded Excel/CSV file.
 
-        Row format: ``telegram_id, name, unit, coordinator, role`` (only the ID
-        and name are required). A header row, blank lines and existing IDs are
-        ignored.
+        Row format: ``telegram_id, name, unit, role`` (only the ID and name are
+        required). A header row, blank lines and existing IDs are ignored.
         """
         rows: list[list[str]] = []
 
@@ -1177,17 +1153,14 @@ class _PortalHandler(BaseHTTPRequestHandler):
                 errors += 1
                 continue
             unit = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
-            coordinator = (
-                parts[3].strip() if len(parts) > 3 and parts[3].strip() else None
-            )
-            role = parts[4].strip().lower() if len(parts) > 4 and parts[4].strip() else ROLE_REGULAR
+            role = parts[3].strip().lower() if len(parts) > 3 and parts[3].strip() else ROLE_REGULAR
             if role not in (ROLE_ADMIN, ROLE_REGULAR):
                 role = ROLE_REGULAR
             tid_int = int(tid)
             if self.db.get_member(tid_int) is not None:
                 skipped += 1
                 continue
-            self.db.create_member(tid_int, name, role, coordinator, now, unit, None)
+            self.db.create_member(tid_int, name, role, None, now, unit, None)
             added += 1
         return added, skipped, errors
 
@@ -1204,8 +1177,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         if role not in (ROLE_ADMIN, ROLE_REGULAR):
             role = ROLE_REGULAR
         self.db.update_member(
-            int(tid), name, role,
-            form.get("coordinator", "").strip() or None,
+            int(tid), name, role, None,
             form.get("unit", "").strip() or None,
             self._parse_site_id(form.get("base_site_id")),
         )
@@ -1249,7 +1221,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             form.get("clock_in_time", "").strip() or None,
             form.get("clock_out_time", "").strip() or None,
             form.get("clock_in_type", "").strip() or None,
-            form.get("coordinator", "").strip() or None,
+            None,
             form.get("late_remark", "").strip() or None,
             1 if form.get("is_late") == "1" else 0,
             _coord("latitude"),
@@ -1322,28 +1294,6 @@ class _PortalHandler(BaseHTTPRequestHandler):
         self.db.delete_unit(uid)
         self._audit("unit.delete", item.name)
         self._flash_redirect("/settings", ok=f"Unit '{item.name}' deleted.")
-
-    def _add_coordinator(self, form) -> None:
-        name = form.get("name", "").strip()
-        if not name:
-            self._flash_redirect("/settings", err="Please enter a coordinator name.")
-            return
-        self.db.add_coordinator(name)
-        self._audit("coordinator.add", name)
-        self._flash_redirect("/settings", ok=f"Coordinator '{name}' added.")
-
-    def _delete_coordinator(self, form) -> None:
-        try:
-            cid = int(form.get("id", "0"))
-        except ValueError:
-            cid = 0
-        item = self.db.get_coordinator(cid)
-        if item is None:
-            self._flash_redirect("/settings", err="Coordinator not found.")
-            return
-        self.db.delete_coordinator(cid)
-        self._audit("coordinator.delete", item.name)
-        self._flash_redirect("/settings", ok=f"Coordinator '{item.name}' deleted.")
 
     def _set_location(self, form) -> None:
         try:
@@ -1422,7 +1372,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
             yield [
                 e.member_name, e.date, e.clock_in_time or "", e.clock_out_time or "",
                 round(timeutil.duration_hours(e.clock_in_time, e.clock_out_time), 2),
-                e.clock_in_type or "", e.coordinator or "",
+                e.clock_in_type or "",
                 "Yes" if e.is_late else "No", e.late_remark or "",
             ]
 
@@ -1436,10 +1386,10 @@ class _PortalHandler(BaseHTTPRequestHandler):
         )
 
     def _member_template(self) -> None:
-        header = ["telegram_id", "name", "unit", "coordinator", "role"]
+        header = ["telegram_id", "name", "unit", "role"]
         example = [
-            [123456789, "Sok Dara", "Engineering", "Sophea", "regular"],
-            [987654321, "Chan Nary", "Operations", "Vuthy", "admin"],
+            [123456789, "Sok Dara", "Engineering", "regular"],
+            [987654321, "Chan Nary", "Operations", "admin"],
         ]
         data = build_xlsx(header, example, sheet_name="Members")
         self._send(
@@ -1452,7 +1402,7 @@ class _PortalHandler(BaseHTTPRequestHandler):
         _mp, _s, _en, tid, sv, ev = self._parse_filter(params)
         entries = self.db.query_attendance(tid, sv, ev)
         header = ["Member", "Date", "Clock In", "Clock Out", "Hours", "Type",
-                  "Coordinator", "Late", "Late Remark"]
+                  "Late", "Late Remark"]
         data = build_xlsx(header, self._report_rows(entries), sheet_name="Attendance")
         stamp = sv or timeutil.today_iso(self.config.tz_offset_hours)
         self._send(

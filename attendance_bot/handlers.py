@@ -31,7 +31,6 @@ from .telegram_api import (
 
 # Conversation states
 STATE_AWAITING_REALNAME = "awaiting_realname"
-STATE_AWAITING_COORDINATOR = "awaiting_coordinator"
 STATE_AWAITING_UNIT = "awaiting_unit"
 STATE_AWAITING_BASE = "awaiting_base"
 STATE_AWAITING_ONSITE_LOCATION = "awaiting_onsite_location"
@@ -45,7 +44,6 @@ HELP_TEXT = (
     "/status - See if you are currently clocked in\n"
     "/summary [week|month] - Your hours and attendance summary\n"
     "/setname <full name> - Update your real name\n"
-    "/setcoordinator <name> - Set or change your coordinator\n"
     "/setunit <unit> - Set your unit/department\n"
     "/setbase - Choose your base location\n"
     "/remark <YYYY-MM-DD> <text> - Add a late remark for a date\n"
@@ -133,9 +131,6 @@ class AttendanceBot:
             "/help": lambda: self._send(chat_id, HELP_TEXT, parse_mode="Markdown"),
             "/whoami": lambda: self._cmd_whoami(chat_id, user_id),
             "/setname": lambda: self._cmd_set_name(chat_id, user_id, arg_str),
-            "/setcoordinator": lambda: self._cmd_set_coordinator(
-                chat_id, user_id, arg_str
-            ),
             "/setunit": lambda: self._cmd_set_unit(chat_id, user_id, arg_str),
             "/setbase": lambda: self._cmd_set_base(chat_id, user_id),
             "/clockin": lambda: self._cmd_clock_in(chat_id, user_id, from_user),
@@ -166,8 +161,6 @@ class AttendanceBot:
             return
         if state.name == STATE_AWAITING_REALNAME:
             self._complete_realname(chat_id, user_id, text, state)
-        elif state.name == STATE_AWAITING_COORDINATOR:
-            self._complete_coordinator(chat_id, user_id, text, state)
         elif state.name == STATE_AWAITING_UNIT:
             self._complete_unit(chat_id, user_id, text, state)
         elif state.name == STATE_AWAITING_LATE_REMARK:
@@ -196,8 +189,8 @@ class AttendanceBot:
             self._send(
                 chat_id,
                 "You are already registered. Your existing record is unchanged.\n"
-                "Use /whoami to review it, or /setname, /setunit, /setbase, "
-                "/setcoordinator to update details.",
+                "Use /whoami to review it, or /setname, /setunit, /setbase "
+                "to update details.",
             )
             return
 
@@ -208,7 +201,6 @@ class AttendanceBot:
             telegram_id=user_id,
             name=self._telegram_name(from_user),
             role=role,
-            coordinator=None,
             created_at=timeutil.now_iso(self.tz),
         )
         self.states[user_id] = ConversationState(
@@ -232,53 +224,7 @@ class AttendanceBot:
             return
         self.db.update_name(user_id, name)
         self._send(chat_id, f"Thanks, {name}!")
-        self._prompt_coordinator(chat_id, user_id, flow="register")
-
-    # --- coordinator (select from admin list, or type) -----------------
-    def _prompt_coordinator(self, chat_id: int, user_id: int, flow) -> None:
-        coords = self.db.list_coordinators()
-        self.states[user_id] = ConversationState(
-            STATE_AWAITING_COORDINATOR, {"flow": flow}
-        )
-        if coords:
-            rows = [[(c.name, f"coord:{c.id}")] for c in coords]
-            self._send(
-                chat_id,
-                "Select your *coordinator* (or type a name):",
-                reply_markup=inline_keyboard(rows),
-                parse_mode="Markdown",
-            )
-        else:
-            self._send(
-                chat_id,
-                "Who is your *coordinator* (supervisor)? Reply with their name.",
-                parse_mode="Markdown",
-            )
-
-    def _complete_coordinator(
-        self, chat_id: int, user_id: int, text: str, state: ConversationState
-    ) -> None:
-        coordinator = text.strip()
-        if not coordinator:
-            self._send(chat_id, "Please send a non-empty coordinator name.")
-            return
-        self._apply_coordinator(chat_id, user_id, coordinator, state)
-
-    def _apply_coordinator(
-        self, chat_id: int, user_id: int, coordinator: str, state: ConversationState
-    ) -> None:
-        self.db.set_coordinator(user_id, coordinator)
-        if state.data.get("after") == "clockin":
-            self.states.pop(user_id, None)
-            self._send(chat_id, f"Coordinator set to: {coordinator}")
-            self._start_clock_in_selection(chat_id, user_id)
-            return
-        if state.data.get("flow") == "register":
-            self._send(chat_id, f"Coordinator: {coordinator}")
-            self._prompt_unit(chat_id, user_id, flow="register")
-            return
-        self.states.pop(user_id, None)
-        self._send(chat_id, f"Coordinator set to: {coordinator}")
+        self._prompt_unit(chat_id, user_id, flow="register")
 
     # --- unit (select from admin list, or type) ------------------------
     def _prompt_unit(self, chat_id: int, user_id: int, flow) -> None:
@@ -355,7 +301,6 @@ class AttendanceBot:
             "\u2705 You're all set!",
             f"Name: {member.name}",
             f"Unit: {member.unit or '(not set)'}",
-            f"Coordinator: {member.coordinator or '(not set)'}",
             f"Base location: {base_name}",
         ]
         if base_note:
@@ -384,16 +329,6 @@ class AttendanceBot:
         self.db.update_name(user_id, arg_str)
         self._send(chat_id, f"Your name is now: {arg_str}")
 
-    def _cmd_set_coordinator(self, chat_id: int, user_id: int, arg_str: str) -> None:
-        member = self._require_member(chat_id, user_id)
-        if member is None:
-            return
-        if not arg_str:
-            self._prompt_coordinator(chat_id, user_id, flow=None)
-            return
-        self.db.set_coordinator(user_id, arg_str)
-        self._send(chat_id, f"Coordinator set to: {arg_str}")
-
     def _cmd_set_unit(self, chat_id: int, user_id: int, arg_str: str) -> None:
         member = self._require_member(chat_id, user_id)
         if member is None:
@@ -421,8 +356,7 @@ class AttendanceBot:
             f"Telegram ID: {member.telegram_id}\n"
             f"Role: {role_label}\n"
             f"Unit: {member.unit or '(not set)'}\n"
-            f"Base location: {self._base_site_name(member)}\n"
-            f"Coordinator: {member.coordinator or '(not set)'}",
+            f"Base location: {self._base_site_name(member)}",
         )
 
     # ------------------------------------------------------------------ #
@@ -438,16 +372,6 @@ class AttendanceBot:
                 chat_id,
                 "You already have an open clock-in for today. "
                 "Use /clockout to close it first.",
-            )
-            return
-        if not member.coordinator:
-            self.states[user_id] = ConversationState(
-                STATE_AWAITING_COORDINATOR, {"after": "clockin"}
-            )
-            self._send(
-                chat_id,
-                "Before your first clock-in, I need your coordinator's name.\n"
-                "Please reply with their name.",
             )
             return
         self._start_clock_in_selection(chat_id, user_id)
@@ -473,23 +397,8 @@ class AttendanceBot:
             self._on_clockin_choice(chat_id, user_id, data.split(":", 1)[1])
         elif data.startswith("base:"):
             self._on_base_choice(chat_id, user_id, data.split(":", 1)[1])
-        elif data.startswith("coord:"):
-            self._on_coordinator_choice(chat_id, user_id, data.split(":", 1)[1])
         elif data.startswith("unit:"):
             self._on_unit_choice(chat_id, user_id, data.split(":", 1)[1])
-
-    def _on_coordinator_choice(self, chat_id: int, user_id: int, raw: str) -> None:
-        if self._require_member(chat_id, user_id) is None:
-            return
-        try:
-            item = self.db.get_coordinator(int(raw))
-        except ValueError:
-            return
-        if item is None:
-            self._send(chat_id, "That coordinator is no longer available - type a name.")
-            return
-        state = self.states.get(user_id) or ConversationState(STATE_AWAITING_COORDINATOR)
-        self._apply_coordinator(chat_id, user_id, item.name, state)
 
     def _on_unit_choice(self, chat_id: int, user_id: int, raw: str) -> None:
         if self._require_member(chat_id, user_id) is None:
@@ -556,13 +465,10 @@ class AttendanceBot:
         late = self._late_flag()
         entry = self.db.create_clock_in(
             telegram_id=user_id, date=today, clock_in_time=now,
-            clock_in_type=TYPE_REMOTE, coordinator=member.coordinator,
+            clock_in_type=TYPE_REMOTE, coordinator=None,
             is_late=1 if late else 0,
         )
-        msg = (
-            f"\u2705 Clocked in (Remote) at {now}.\n"
-            f"Coordinator: {member.coordinator}"
-        )
+        msg = f"\u2705 Clocked in (Remote) at {now}."
         self._send(chat_id, msg + self._status_suffix(user_id, entry.id, late))
 
     def _member_sites(self, member: Member) -> list[Site]:
@@ -639,15 +545,14 @@ class AttendanceBot:
         late = self._late_flag()
         entry = self.db.create_clock_in(
             telegram_id=user_id, date=today, clock_in_time=now,
-            clock_in_type=TYPE_ON_SITE, coordinator=member.coordinator,
+            clock_in_type=TYPE_ON_SITE, coordinator=None,
             latitude=lat, longitude=lon, is_late=1 if late else 0,
         )
         msg = (
             f"\u2705 Clocked in (On_Site) at {now}.\n"
             f"Site: {best_site.name} ({distance:.0f} m away)\n"
             f"\U0001F4CD Location: {lat:.6f}, {lon:.6f}\n"
-            f"Map: https://www.google.com/maps?q={lat},{lon}\n"
-            f"Coordinator: {member.coordinator}"
+            f"Map: https://www.google.com/maps?q={lat},{lon}"
         )
         self.client.send_message(
             chat_id, msg + self._status_suffix(user_id, entry.id, late),

@@ -22,7 +22,6 @@ CSV_HEADER = [
     "Clock In",
     "Clock Out",
     "Type",
-    "Coordinator",
     "Late Remark",
 ]
 
@@ -51,7 +50,6 @@ def build_csv(entries: Iterable[AttendanceEntry]) -> bytes:
                 _dash(e.clock_in_time),
                 _dash(e.clock_out_time),
                 _dash(e.clock_in_type),
-                _dash(e.coordinator),
                 _dash(e.late_remark),
             ]
         )
@@ -83,9 +81,7 @@ def render_text(
         lines.append(
             f"    In: {_dash(e.clock_in_time)}    Out: {_dash(e.clock_out_time)}"
         )
-        lines.append(
-            f"    Type: {_dash(e.clock_in_type)}    Coordinator: {_dash(e.coordinator)}"
-        )
+        lines.append(f"    Type: {_dash(e.clock_in_type)}")
         if e.late_remark:
             lines.append(f"    Late remark: {e.late_remark}")
         lines.append("")
